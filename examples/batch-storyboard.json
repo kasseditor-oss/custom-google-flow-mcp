@@ -1,0 +1,11 @@
+{
+  "project_name": "Meu_Curta",
+  "output_dir": "C:/Projetos",
+  "concurrency": 1,
+  "default_aspect_ratio": "16:9",
+  "scenes": [
+    { "scene_id": 1, "take_number": 1, "prompt": "Wide establishing shot of a foggy pine forest at dawn", "camera_motion": "dolly_in" },
+    { "scene_id": 1, "take_number": 2, "prompt": "A lone hiker walks between the trees, backlit by the rising sun", "camera_motion": "pan_right" },
+    { "scene_id": 2, "take_number": 1, "prompt": "Close-up of dew drops on a spider web", "camera_motion": "static", "outputs_count": 2 }
+  ]
+}

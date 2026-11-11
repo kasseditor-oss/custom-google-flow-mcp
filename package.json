@@ -1,0 +1,49 @@
+{
+  "name": "custom-google-flow-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Google Flow (labs.google) with CDP auth, batch storyboard queue, editor-friendly naming, manifests, ingredients, camera controls and self-healing selectors.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "custom-google-flow-mcp": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "auth": "tsc -p tsconfig.json && node dist/cli/auth.js",
+    "chrome": "tsc -p tsconfig.json && node dist/cli/auth.js --no-wait",
+    "smoke": "node dist/cli/smoke.js",
+    "prepare": "npm run build"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "playwright-core": "^1.65.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kasseditor-oss/custom-google-flow-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "google-flow",
+    "veo",
+    "nano-banana",
+    "playwright",
+    "cdp",
+    "video-generation"
+  ],
+  "author": "Kassdev"
+}

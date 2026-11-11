@@ -25,7 +25,7 @@ Na primeira execução o plugin instala as dependências sozinho (~5 s). Depois 
 npx -y github:kasseditor-oss/custom-google-flow-mcp install
 ```
 
-Instala uma cópia permanente em `%LOCALAPPDATA%\custom-google-flow-mcppp`, registra o servidor `google-flow`
+Instala uma cópia permanente em `%LOCALAPPDATA%\custom-google-flow-mcp\app`, registra o servidor `google-flow`
 no Claude Code (escopo usuário) e no `claude_desktop_config.json` do Claude Desktop (com backup `.bak`).
 Opções: `--output-root D:/Videos`, `--concurrency 2`, `--name meu-flow`, `--only code|desktop`.
 

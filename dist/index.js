@@ -14,7 +14,7 @@ import { log } from "./logger.js";
 import { updateManifest } from "./output/manifest.js";
 import { projectDirectory, resolveOutputRoot } from "./output/naming.js";
 import { JobQueue, isTerminal } from "./queue/job-queue.js";
-import { ASPECT_RATIOS, CAMERA_MOTIONS } from "./types.js";
+import { ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, CAMERA_MOTIONS } from "./types.js";
 import { UI_APP_ONLY_META, UI_MIME_TYPE, UI_RESOURCE_URI, UI_TOOL_META, brandIconDataUri, iconDataUri, jobPreview, openLocalFile, readThumbnail, viewerHtml } from "./ui.js";
 const VERSION = "1.2.0";
 /** Official Flow icon (cached locally after the first download; generic logo if offline). */
@@ -89,6 +89,9 @@ const normalizeCamera = (value) => value ? (CAMERA_ALIASES[value] ?? value) : un
 function buildSpec(input) {
     const outputDir = resolveOutputRoot(input.output_dir ?? config.outputRoot);
     const camera = input.mediaType === "video" ? normalizeCamera(input.camera_motion) : undefined;
+    if (input.mediaType === "video" && input.aspect_ratio && !VIDEO_ASPECT_RATIOS.includes(input.aspect_ratio)) {
+        throw new FlowError("validation_error", `Flow video supports ${VIDEO_ASPECT_RATIOS.join(" and ")} only (got ${input.aspect_ratio}).`, ["Use 9:16 for TikTok/Reels/Shorts or 16:9 for YouTube."]);
+    }
     if (input.flow_project_url && !isProjectUrl(input.flow_project_url)) {
         throw new FlowError("validation_error", "flow_project_url must be a Flow project URL, e.g. https://flow.google.com/project/<id>.");
     }
@@ -98,6 +101,8 @@ function buildSpec(input) {
         ...(input.aspect_ratio ? { aspectRatio: input.aspect_ratio } : {}),
         ...(camera ? { cameraMotion: camera } : {}),
         outputsCount: input.outputs_count ?? 1,
+        ...(input.mediaType === "video" && input.duration_seconds ? { durationSeconds: input.duration_seconds } : {}),
+        ...(input.mediaType === "video" && input.resolution ? { resolution: input.resolution.trim().toLowerCase() } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.start_frame ? { startFrame: validateImage(input.start_frame, "start_frame") } : {}),
         ...(input.end_frame ? { endFrame: validateImage(input.end_frame, "end_frame") } : {}),
@@ -132,6 +137,7 @@ function jobView(job, verbose = false) {
                 manifest: job.result.manifestPath,
                 flow_project_url: job.result.flowProjectUrl,
                 ...(job.result.modelUsed ? { model_used: job.result.modelUsed } : {}),
+                ...(job.result.creditsEstimated !== undefined ? { credits_used: job.result.creditsEstimated } : {}),
                 applied_via: job.result.applied,
                 warnings: job.result.warnings,
                 ...(verbose ? { final_prompt_sent: job.result.finalPrompt, file_details: job.result.files } : {}),
@@ -174,12 +180,16 @@ async function enqueueAndMaybeWait(spec, wait, waitSeconds, maxRetries, extra) {
 }
 // ------------------------------------------------------------------ schemas
 const zPrompt = z.string().min(3).max(5_000).describe("Prompt text (any language; English often gives the best Veo results).");
-const zAspect = z.enum(ASPECT_RATIOS).optional().describe("Aspect ratio set in Flow's UI: 16:9 (horizontal), 9:16 (vertical), 1:1 (square). If the control is missing it is added to the prompt.");
+const zAspect = z.enum(ASPECT_RATIOS).optional().describe("Image aspect ratio: 16:9, 4:3, 1:1, 3:4 or 9:16. Set in Flow's UI (falls back to a prompt directive if the control is missing).");
 const zCamera = z
     .enum([...CAMERA_MOTIONS, "pan", "tilt", "zoom", "dolly", "orbit"])
     .optional()
     .describe("Camera movement. Applied via Flow's camera control when present, otherwise as a cinematic prompt directive. Aliases: pan=pan_right, tilt=tilt_up, zoom=zoom_in, dolly=dolly_in, orbit=orbit_right.");
-const zOutputs = z.number().int().min(1).max(4).default(1).describe("Number of variations (1-4). Multiple outputs are saved as _v1.._v4.");
+const zOutputs = z.number().int().min(1).max(4).optional().describe("How many variations to generate (1-4). DEFAULT 1: only set this when the user explicitly asks for more. Multiple outputs are saved as _v1.._v4.");
+const zDuration = z.number().int().min(1).max(60).optional().describe("Video length in seconds. Flow's allowed range depends on the model (e.g. Omni 1.2 Flash: 3-15 s) and is checked live; omit to keep Flow's current length.");
+const zResolution = z.string().regex(/^\d{3,4}p$/i).optional().describe("Video resolution as offered by Flow, e.g. '720p' or '360p' (cheaper). Omit to keep Flow's current setting.");
+const zAskOptions = z.boolean().optional().describe("If true (default when the client supports it), unspecified options (quantity, and for video: format, length) are asked to the user in a dialog showing the credit cost before generating. Set false to skip the dialog and use defaults.");
+const zVideoAspect = z.enum(VIDEO_ASPECT_RATIOS).optional().describe("Video format: 9:16 = vertical (TikTok, Reels, Shorts); 16:9 = horizontal (YouTube). Omit to keep Flow's current setting.");
 const zModel = z.string().min(2).max(80).optional().describe("Optional model name as shown in Flow (e.g. 'Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Nano Banana Pro'). Omit to keep Flow's current default.");
 const zProject = z.string().min(1).max(80).default("Flow_Project").describe("Project name. Files go to <output_dir>/<project_name>/Assets_Flow/ and manifest.json to <output_dir>/<project_name>/.");
 const zScene = z.union([z.string().max(40), z.number().int().min(0)]).optional().describe("Scene id. Numbers are zero-padded: 1 -> Scene_01.");
@@ -211,12 +221,161 @@ const server = new McpServer({
 }, {
     instructions: [
         "Automates Google Flow (flow.google.com, formerly labs.google/fx/tools/flow) in the user's own logged-in Chrome via CDP.",
-        "Start with flow_check_session. If not ready, tell the user to run `npm run auth` in the custom-google-flow-mcp folder and sign in.",
+        "Start with flow_check_session. The browser runs invisibly; if Google sign-in is needed a Chrome window opens by itself for the user to sign in, then it hides again (fallback: `npm run auth` in the custom-google-flow-mcp folder).",
         "Generations consume the user's Flow credits. Videos take 1-5 min: prefer wait=false for long work and poll flow_get_queue_status.",
         "For storyboards use flow_generate_batch. Files are saved as <output_dir>/<project_name>/Assets_Flow/Scene_XX_Take_YY.ext with manifest.json.",
         "If something fails with ui_changed, call flow_health_check and look at the returned screenshot.",
         "Never operate the Flow website with generic browser tools while jobs run in this MCP.",
     ].join("\n"),
+});
+// ------------------------------------------------- options dialog & estimate
+const ASK_OPTIONS = (process.env.FLOW_MCP_ASK_OPTIONS ?? "auto").toLowerCase() !== "never";
+function cancelledByUser() {
+    const view = { status: "cancelled", message: "The user closed the options dialog; nothing was generated and no credits were spent." };
+    return { content: [{ type: "text", text: JSON.stringify(view, null, 2) }], structuredContent: view };
+}
+/**
+ * When the user did not say how many outputs (and, for video, which format and
+ * length), asks them in a native MCP dialog (elicitation) that shows the credit
+ * cost Flow announces. Clients without elicitation, ask_options=false or
+ * FLOW_MCP_ASK_OPTIONS=never simply use the defaults (1 output, Flow's current
+ * format/length). Mutates `spec` with the chosen values.
+ */
+async function askOptions(spec, input) {
+    if (!ASK_OPTIONS || input.ask_options === false)
+        return "ok";
+    if (!server.server.getClientCapabilities()?.elicitation)
+        return "ok";
+    const isVideo = spec.mediaType === "video";
+    const askCount = input.outputs_count === undefined;
+    const askAspect = isVideo && !input.aspect_ratio;
+    const askDuration = isVideo && !input.duration_seconds;
+    const askResolution = isVideo && !input.resolution;
+    if (!askCount && !askAspect && !askDuration && !askResolution)
+        return "ok";
+    const estimate = await generator.estimate({
+        mediaType: spec.mediaType,
+        ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
+        outputsCount: 1,
+        ...(spec.model ? { model: spec.model } : {}),
+        ...(spec.durationSeconds ? { durationSeconds: spec.durationSeconds } : {}),
+        ...(spec.resolution ? { resolution: spec.resolution } : {}),
+    }).catch((error) => {
+        log.warn("Cost estimate failed; asking without it", error instanceof Error ? error.message : error);
+        return undefined;
+    });
+    const properties = {};
+    if (askCount) {
+        properties.outputs_count = {
+            type: "string",
+            title: isVideo ? "Quantos vídeos?" : "Quantas imagens?",
+            enum: ["1", "2", "3", "4"],
+            enumNames: ["1", "2", "3", "4"],
+            default: "1",
+        };
+    }
+    if (askAspect) {
+        properties.aspect_ratio = {
+            type: "string",
+            title: "Formato",
+            enum: ["9:16", "16:9"],
+            enumNames: ["9:16 — vertical (TikTok, Reels, Shorts)", "16:9 — horizontal (YouTube)"],
+            default: "16:9",
+        };
+    }
+    if (askDuration) {
+        const range = estimate?.durationRange;
+        properties.duration_seconds = {
+            type: "integer",
+            title: range ? `Duração em segundos (${range.min}–${range.max})` : "Duração em segundos",
+            ...(range ? { minimum: range.min, maximum: range.max } : { minimum: 1, maximum: 60 }),
+            default: range ? Math.min(Math.max(8, range.min), range.max) : 8,
+        };
+    }
+    if (askResolution && estimate?.resolutions && estimate.resolutions.length > 1) {
+        properties.resolution = {
+            type: "string",
+            title: "Resolução",
+            enum: estimate.resolutions,
+            enumNames: estimate.resolutions,
+            default: estimate.resolutions.includes("720p") ? "720p" : estimate.resolutions[estimate.resolutions.length - 1],
+        };
+    }
+    const what = isVideo ? "vídeo" : "imagem";
+    const costLine = estimate?.credits !== undefined
+        ? `Custo com as opções atuais (1 ${what}): ${estimate.credits} créditos${isVideo ? " — muda com duração, resolução e quantidade" : ""}.`
+        : "O custo exato aparece no resultado.";
+    const message = [
+        `Google Flow · ${isVideo ? "gerar vídeo" : "gerar imagem"}${estimate?.model ? ` com ${estimate.model}` : ""}.`,
+        costLine,
+        "Escolha as opções (ou cancele para não gastar créditos):",
+    ].join("\n");
+    let result;
+    try {
+        result = await server.server.elicitInput({ message, requestedSchema: { type: "object", properties: properties, required: [] } }, { timeout: 300_000 });
+    }
+    catch (error) {
+        log.warn("Options dialog failed; using defaults", error instanceof Error ? error.message : error);
+        return "ok";
+    }
+    if (result.action !== "accept")
+        return "cancelled";
+    const content = (result.content ?? {});
+    const count = Number(content.outputs_count);
+    if (askCount && Number.isInteger(count) && count >= 1 && count <= 4)
+        spec.outputsCount = count;
+    if (askAspect && (content.aspect_ratio === "9:16" || content.aspect_ratio === "16:9"))
+        spec.aspectRatio = content.aspect_ratio;
+    const seconds = Number(content.duration_seconds);
+    if (askDuration && Number.isInteger(seconds) && seconds > 0)
+        spec.durationSeconds = seconds;
+    if (askResolution && typeof content.resolution === "string" && /^\d{3,4}p$/i.test(content.resolution))
+        spec.resolution = content.resolution.toLowerCase();
+    return "ok";
+}
+server.registerTool("flow_estimate_cost", {
+    title: "Estimate Google Flow credits",
+    description: "Shows how many credits a generation will use BEFORE generating (Flow's own 'Generating will use N credits'), plus the live options for the current model: allowed video length range, resolutions and formats. Configures Flow's settings panel but never submits, so it spends no credits.",
+    inputSchema: {
+        media_type: z.enum(["video", "image"]).default("video"),
+        aspect_ratio: z.enum(ASPECT_RATIOS).optional(),
+        outputs_count: z.number().int().min(1).max(4).default(1),
+        duration_seconds: zDuration,
+        resolution: zResolution,
+        model: zModel,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+}, async (input) => {
+    try {
+        if (input.media_type === "video" && input.aspect_ratio && !VIDEO_ASPECT_RATIOS.includes(input.aspect_ratio)) {
+            throw new FlowError("validation_error", `Flow video supports ${VIDEO_ASPECT_RATIOS.join(" and ")} only.`);
+        }
+        const estimate = await generator.estimate({
+            mediaType: input.media_type,
+            ...(input.aspect_ratio ? { aspectRatio: input.aspect_ratio } : {}),
+            outputsCount: input.outputs_count,
+            ...(input.model ? { model: input.model } : {}),
+            ...(input.duration_seconds ? { durationSeconds: input.duration_seconds } : {}),
+            ...(input.resolution ? { resolution: input.resolution.toLowerCase() } : {}),
+        });
+        return ok({
+            media_type: input.media_type,
+            outputs_count: input.outputs_count,
+            ...(input.duration_seconds ? { duration_seconds: input.duration_seconds } : {}),
+            ...(input.resolution ? { resolution: input.resolution } : {}),
+            credits: estimate.credits ?? null,
+            model: estimate.model,
+            allowed: {
+                ...(estimate.durationRange ? { duration_seconds: estimate.durationRange } : {}),
+                ...(estimate.resolutions ? { resolutions: estimate.resolutions } : {}),
+                ...(estimate.aspectRatios ? { aspect_ratios: estimate.aspectRatios } : {}),
+            },
+            note: estimate.credits === undefined ? "Flow did not display a credit cost for this configuration." : "Credits as displayed by Flow before generating.",
+        });
+    }
+    catch (error) {
+        return failed(error);
+    }
 });
 server.registerTool("flow_check_session", {
     title: "Check Google Flow session",
@@ -251,10 +410,13 @@ server.registerTool("flow_generate_video", {
     description: "Generates a video in Google Flow from text, with aspect ratio, camera motion, variation count and editor-ready naming (Scene_01_Take_02.mp4) plus manifest.json. Consumes Flow credits.",
     inputSchema: {
         prompt: zPrompt,
-        aspect_ratio: zAspect,
+        aspect_ratio: zVideoAspect,
+        duration_seconds: zDuration,
+        resolution: zResolution,
         camera_motion: zCamera,
         outputs_count: zOutputs,
         model: zModel,
+        ask_options: zAskOptions,
         ...namingShape,
         flow_project_url: zFlowProject,
         timeout_seconds: zTimeout,
@@ -267,6 +429,8 @@ server.registerTool("flow_generate_video", {
 }, async (input, extra) => {
     try {
         const spec = buildSpec({ ...input, mediaType: "video" });
+        if ((await askOptions(spec, input)) === "cancelled")
+            return cancelledByUser();
         return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {
@@ -281,10 +445,13 @@ server.registerTool("flow_image_to_video", {
         start_frame: zImagePath("the START (first) frame"),
         end_frame: zImagePath("the END (last) frame"),
         reference_images: zRefs,
-        aspect_ratio: zAspect,
+        aspect_ratio: zVideoAspect,
+        duration_seconds: zDuration,
+        resolution: zResolution,
         camera_motion: zCamera,
         outputs_count: zOutputs,
         model: zModel,
+        ask_options: zAskOptions,
         ...namingShape,
         flow_project_url: zFlowProject,
         timeout_seconds: zTimeout,
@@ -300,6 +467,8 @@ server.registerTool("flow_image_to_video", {
             throw new FlowError("validation_error", "Provide at least one of start_frame, end_frame or reference_images.");
         }
         const spec = buildSpec({ ...input, mediaType: "video" });
+        if ((await askOptions(spec, input)) === "cancelled")
+            return cancelledByUser();
         return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {
@@ -315,6 +484,7 @@ server.registerTool("flow_generate_image", {
         outputs_count: zOutputs,
         model: zModel,
         reference_images: zRefs,
+        ask_options: zAskOptions,
         ...namingShape,
         flow_project_url: zFlowProject,
         timeout_seconds: zTimeout,
@@ -327,6 +497,8 @@ server.registerTool("flow_generate_image", {
 }, async (input, extra) => {
     try {
         const spec = buildSpec({ ...input, mediaType: "image" });
+        if ((await askOptions(spec, input)) === "cancelled")
+            return cancelledByUser();
         return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {

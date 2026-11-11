@@ -18,6 +18,8 @@ export interface ManifestEntry {
     aspect_ratio?: string;
     camera_motion?: string;
     outputs_count: number;
+    duration_seconds?: number;
+    resolution?: string;
     model?: string;
     /** Flow's UI does not expose seeds; recorded explicitly for traceability. */
     seed: string | null;

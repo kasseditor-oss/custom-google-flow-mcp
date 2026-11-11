@@ -10,7 +10,7 @@ import { assetBaseName, assetsDirectory, projectDirectory, uniqueAssetPath } fro
 import { extensionFor, probeMedia, sha256 } from "../output/probe.js";
 import type { ExecutionContext } from "../queue/job-queue.js";
 import type { AppliedVia, GenerationResult, GenerationSpec, JobRecord, SavedAsset } from "../types.js";
-import { FlowPage, type FlowMode, type SubmitContext } from "./flow-page.js";
+import { FlowPage, type ConfigureResult, type FlowMode, type SubmitContext } from "./flow-page.js";
 import { flattenKeys, mediaSnapshots, type MediaSnapshot } from "./media.js";
 
 interface WorkerSlot {
@@ -31,9 +31,27 @@ interface PendingGeneration {
   warnings: string[];
   ready?: MediaSnapshot[];
   modelUsed?: string;
+  creditsEstimated?: number;
 }
 
-const RATIO_WORDS: Record<string, string> = { "16:9": "horizontal widescreen", "9:16": "vertical portrait", "1:1": "square" };
+const RATIO_WORDS: Record<string, string> = { "16:9": "horizontal widescreen", "9:16": "vertical portrait", "1:1": "square", "4:3": "classic landscape", "3:4": "classic portrait" };
+
+export interface EstimateInput {
+  mediaType: GenerationSpec["mediaType"];
+  aspectRatio?: GenerationSpec["aspectRatio"];
+  outputsCount: number;
+  model?: string;
+  durationSeconds?: number;
+  resolution?: string;
+}
+
+export interface EstimateResult {
+  credits?: number;
+  model?: string;
+  durationRange?: { min: number; max: number };
+  resolutions?: string[];
+  aspectRatios?: string[];
+}
 
 /**
  * Executes one generation job on a worker tab. Slot 0 reuses the user's Flow
@@ -60,6 +78,39 @@ export class FlowGenerator {
     return slot;
   }
 
+  /**
+   * Configures Flow's settings panel exactly like a generation would, reads the
+   * credits Flow announces and the live options, and stops before submitting.
+   */
+  async estimate(input: EstimateInput): Promise<EstimateResult> {
+    const slot = this.acquire();
+    this.session.hold();
+    try {
+      const flow = await this.readyFlow(slot, { signal: new AbortController().signal, setPhase: () => undefined });
+      slot.projectUrl = await flow.ensureProject(slot.projectUrl ? { projectUrl: slot.projectUrl } : {});
+      const configured: ConfigureResult = await flow.configure({
+        media: input.mediaType,
+        ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+        outputsCount: input.outputsCount,
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.durationSeconds ? { durationSeconds: input.durationSeconds } : {}),
+        ...(input.resolution ? { resolution: input.resolution } : {}),
+        readOptions: true,
+      });
+      const model = configured.model ?? (await flow.currentModelLabel().catch(() => undefined));
+      return {
+        ...(configured.credits !== undefined ? { credits: configured.credits } : {}),
+        ...(model ? { model } : {}),
+        ...(configured.durationRange ? { durationRange: configured.durationRange } : {}),
+        ...(configured.resolutions?.length ? { resolutions: configured.resolutions } : {}),
+        ...(configured.aspectRatios?.length ? { aspectRatios: configured.aspectRatios } : {}),
+      };
+    } finally {
+      slot.busy = false;
+      this.session.release();
+    }
+  }
+
   async run(job: JobRecord, context: ExecutionContext): Promise<GenerationResult> {
     const slot = this.acquire();
     this.session.hold();
@@ -82,6 +133,25 @@ export class FlowGenerator {
     }
   }
 
+  /** ensureReady(); on login_required opens the visible sign-in window, waits, and retries once (hidden again). */
+  private async readyFlow(slot: WorkerSlot, context: ExecutionContext): Promise<FlowPage> {
+    const flow = await this.flowFor(slot);
+    try {
+      await flow.ensureReady();
+      return flow;
+    } catch (raw) {
+      const error = toFlowError(raw);
+      if (error.code !== "login_required" || !this.session.canInteractiveLogin) throw error;
+      context.setPhase("waiting for Google sign-in (a Chrome window was opened)");
+      await this.session.interactiveLogin();
+      slot.flow = undefined;
+      context.setPhase(`connecting (worker ${slot.id})`);
+      const fresh = await this.flowFor(slot);
+      await fresh.ensureReady();
+      return fresh;
+    }
+  }
+
   private async flowFor(slot: WorkerSlot): Promise<FlowPage> {
     if (slot.flow && !slot.flow.page.isClosed() && this.session.isConnected) return slot.flow;
     const page = slot.id === 0 ? await this.session.primaryPage() : await this.session.newPage();
@@ -96,8 +166,7 @@ export class FlowGenerator {
       if (context.signal.aborted) throw new FlowError("cancelled", "Job cancelled.");
     };
     context.setPhase(`connecting (worker ${slot.id})`);
-    const flow = await this.flowFor(slot);
-    await flow.ensureReady();
+    const flow = await this.readyFlow(slot, context);
     abortCheck();
 
     const pending = this.pending.get(job.id);
@@ -107,6 +176,7 @@ export class FlowGenerator {
     let warnings: string[];
     let projectUrl: string;
     let modelUsed: string | undefined = pending?.modelUsed;
+    let creditsEstimated: number | undefined = pending?.creditsEstimated;
 
     if (pending) {
       // Resume: credits were already spent on a previous attempt.
@@ -157,9 +227,15 @@ export class FlowGenerator {
         ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
         outputsCount: spec.outputsCount,
         ...(spec.model ? { model: spec.model } : {}),
+        ...(spec.durationSeconds ? { durationSeconds: spec.durationSeconds } : {}),
+        ...(spec.resolution ? { resolution: spec.resolution } : {}),
+        ...(spec.mediaType === "video" && (spec.startFrame || spec.endFrame) ? { videoMode: "frames" as const } : {}),
+        ...(spec.mediaType === "video" && !spec.startFrame && !spec.endFrame && spec.referenceImages.length ? { videoMode: "ingredients" as const } : {}),
       });
       Object.assign(applied, configured.applied);
       warnings = [...configured.warnings];
+      if (configured.credits !== undefined) creditsEstimated = configured.credits;
+      if (configured.model) modelUsed = configured.model;
       const directives: string[] = [];
 
       if (spec.startFrame || spec.endFrame) {
@@ -193,7 +269,7 @@ export class FlowGenerator {
       const prefix = agentUi || applied.outputs_count !== "ui" ? `Create exactly ${spec.outputsCount === 1 ? "one" : spec.outputsCount} ${noun}: ` : "";
       finalPrompt = `${prefix}${spec.prompt.trim()}${directives.length ? `\n\n${directives.join(" ")}` : ""}`;
 
-      modelUsed = await flow.currentModelLabel().catch(() => undefined);
+      modelUsed ??= await flow.currentModelLabel().catch(() => undefined);
       context.setPhase("submitting");
       await flow.fillPrompt(finalPrompt);
       const submitContext = await flow.prepareSubmit(spec.mediaType, finalPrompt);
@@ -207,6 +283,7 @@ export class FlowGenerator {
         applied,
         warnings,
         ...(modelUsed ? { modelUsed } : {}),
+        ...(creditsEstimated !== undefined ? { creditsEstimated } : {}),
       };
       this.pending.set(job.id, record);
 
@@ -231,7 +308,16 @@ export class FlowGenerator {
     const files = await this.save(flow, job, ready);
     const manifestPath = await this.writeManifest(job, files, finalPrompt, projectUrl, applied);
     this.pending.delete(job.id);
-    return { files, manifestPath, finalPrompt, flowProjectUrl: projectUrl, ...(modelUsed ? { modelUsed } : {}), applied, warnings };
+    return {
+      files,
+      manifestPath,
+      finalPrompt,
+      flowProjectUrl: projectUrl,
+      ...(modelUsed ? { modelUsed } : {}),
+      ...(creditsEstimated !== undefined ? { creditsEstimated } : {}),
+      applied,
+      warnings,
+    };
   }
 
   /** After a reload, finds the same assets again by identity keys. */
@@ -309,6 +395,8 @@ export class FlowGenerator {
             ...(spec.aspectRatio ? { aspect_ratio: spec.aspectRatio } : {}),
             ...(spec.cameraMotion ? { camera_motion: spec.cameraMotion } : {}),
             outputs_count: spec.outputsCount,
+            ...(spec.durationSeconds ? { duration_seconds: spec.durationSeconds } : {}),
+            ...(spec.resolution ? { resolution: spec.resolution } : {}),
             ...(spec.model ? { model: spec.model } : {}),
             seed: null,
             ...(spec.startFrame ? { start_frame: spec.startFrame } : {}),

@@ -11,6 +11,8 @@ const RATIO_SYNONYMS = {
     "16:9": ["16:9", "Paisagem", "Horizontal", "Landscape", "Widescreen"],
     "9:16": ["9:16", "Retrato", "Vertical", "Portrait"],
     "1:1": ["1:1", "Quadrado", "Square"],
+    "4:3": ["4:3"],
+    "3:4": ["3:4"],
 };
 const CROP_CONFIRM = ["Cortar e salvar", "Recortar e salvar", "Salvar", "Concluir", "Concluído", "Confirmar", "Usar imagem", "Crop and save", "Save", "Done", "Confirm", "Use image"];
 const ICON_WORDS = /\b(?:arrow_drop_down|expand_more|check|crop_16_9|crop_9_16|crop_landscape|crop_portrait|crop_square|videocam|image)\b/gi;
@@ -30,10 +32,6 @@ function parseOutputCount(value) {
     const match = cleanLabel(value).match(/^(?:x\s*)?([1-4])(?:\s*x)?(?:\s+(?:sa[ií]das?|outputs?|resultados?|v[ií]deos?|imagens?|images?|videos?))?$/i);
     return match?.[1] ? Number.parseInt(match[1], 10) : undefined;
 }
-/**
- * High-level operations on one Google Flow tab. Every DOM lookup goes through
- * src/selectors.ts so UI drift is fixed in one place.
- */
 const instances = new WeakMap();
 export class FlowPage {
     page;
@@ -207,8 +205,22 @@ export class FlowPage {
         const checked = (await target.getAttribute("aria-checked")) === "true" || (await target.getAttribute("aria-selected")) === "true";
         if (!checked) {
             await target.click();
-            await sleep(600);
+            await sleep(400);
         }
+        // The panel re-renders after switching media type; wait until the media-specific
+        // controls (outputs, and for video the resolution radios / length slider) exist.
+        const deadline = Date.now() + 6_000;
+        while (Date.now() < deadline) {
+            const outputs = await firstVisible([radios.filter({ hasText: /^\s*x[1-4]\s*$/ })]);
+            const videoReady = media !== "video" || Boolean(await firstVisible([
+                radios.filter({ hasText: /\d{3,4}p/ }),
+                this.page.locator('input[type="range"]'),
+            ]));
+            if (outputs && videoReady)
+                break;
+            await sleep(250);
+        }
+        await sleep(250);
         return "ui";
     }
     /** Disables Flow Agent's per-generation credit confirmation (non-fatal if absent). */
@@ -386,10 +398,23 @@ export class FlowPage {
             model: input.model ? "failed" : "not_requested",
         };
         const warnings = [];
+        const result = { applied, warnings };
         const opened = await this.openSettings();
         try {
             if (opened)
                 applied.media_type = await this.chooseMediaType(input.media);
+            if (opened && input.media === "video" && input.videoMode) {
+                applied.video_mode = await this.chooseRadio(input.videoMode === "frames" ? /crop_free|frames|quadros/i : /chrome_extension|ingredient/i);
+            }
+            if (input.resolution) {
+                const wanted = input.resolution.toLowerCase();
+                const ok = opened && (await this.chooseTab(input.media, (text) => /\b\d{3,4}p\b/i.test(text), (text) => cleanLabel(text).toLowerCase().replace(/\s*info$/, "").startsWith(wanted)));
+                applied.resolution = ok ? "ui" : "failed";
+                if (!ok) {
+                    const options = await this.readRadioOptions(/\b\d{3,4}p\b/i);
+                    throw new FlowError("unsupported_option", `Resolution '${input.resolution}' is not offered for this ${input.media} model.`, options.length ? [`Available: ${options.join(", ")}`] : []);
+                }
+            }
             if (input.model) {
                 if (await this.chooseModel(input.media, input.model))
                     applied.model = "ui";
@@ -411,13 +436,124 @@ export class FlowPage {
             const viaTab = opened && (await this.chooseTab(input.media, (text) => text.split(/\s+/).some((part) => parseOutputCount(part) !== undefined), outputMatch));
             const outputsOk = viaTab || (await this.chooseFromDropdown(TEXT.outputs, outputMatch));
             applied.outputs_count = outputsOk ? "ui" : "prompt";
+            if (opened && input.media === "video" && (input.durationSeconds || input.readOptions)) {
+                const duration = await this.setDuration(input.durationSeconds);
+                if (duration.range)
+                    result.durationRange = duration.range;
+                if (input.durationSeconds) {
+                    applied.duration_seconds = duration.applied ? "ui" : "failed";
+                    if (!duration.applied) {
+                        throw new FlowError("unsupported_option", `Duration ${input.durationSeconds}s is not available for this model.`, duration.range ? [`Allowed: ${duration.range.min}-${duration.range.max} seconds.`] : ["This model has a fixed length; omit duration_seconds."]);
+                    }
+                }
+            }
+            if (opened && input.readOptions) {
+                result.resolutions = await this.readRadioOptions(/\b\d{3,4}p\b/i);
+                result.aspectRatios = await this.readRadioOptions(/^\d+:\d+$/);
+            }
+            if (opened) {
+                const credits = await this.readCost();
+                if (credits !== undefined)
+                    result.credits = credits;
+                // The video chip shows "Video · 720p · 8s"; the model name lives in the model-family button.
+                const family = await firstVisible([this.page.locator('button[aria-label="Select model family"], button[aria-haspopup="menu"]').filter({ hasText: /veo|omni|banana|imagen|gemini/i })]);
+                const label = family ? cleanLabel(await family.innerText().catch(() => "")).replace(/arrow_drop_down/gi, "").replace(/[^\p{L}\p{N}.\- ]/gu, "").replace(/\s+/g, " ").trim() : "";
+                if (label)
+                    result.model = label;
+            }
         }
         finally {
             if (opened)
                 await this.closeSettings(true);
             await pressEscape(this.page);
         }
-        return { applied, warnings };
+        return result;
+    }
+    /** Clicks the first visible settings radio whose text matches. */
+    async chooseRadio(pattern) {
+        const radio = await firstVisible([this.page.locator('[role="radiogroup"] [role="radio"]').filter({ hasText: pattern })]);
+        if (!radio)
+            return "default";
+        if ((await radio.getAttribute("aria-checked")) !== "true") {
+            await radio.click();
+            await sleep(400);
+        }
+        return "ui";
+    }
+    /** Labels of the visible settings radios matching `pattern` (icon ligatures removed). */
+    async readRadioOptions(pattern) {
+        const labels = await visibleTexts(this.page.locator('[role="radiogroup"] [role="radio"]'));
+        return [...new Set(labels.map((label) => cleanLabel(label).replace(/\s*info$/i, "").trim()).filter((label) => pattern.test(label)))];
+    }
+    /** "Generating will use 48 credits" -> 48 (read while the settings panel is open). */
+    async readCost() {
+        // The cost line updates a moment after each change; poll briefly.
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+            const value = await this.readCostOnce();
+            if (value !== undefined)
+                return value;
+            await sleep(250);
+        }
+        return undefined;
+    }
+    async readCostOnce() {
+        const text = await this.page.locator("body").innerText().catch(() => "");
+        const match = text.match(/(?:will use|usar[áa]|vai usar|consumir[áa])\s*([\d.,]+)\s*(?:credits?|cr[ée]ditos?)/i)
+            ?? text.match(/([\d.,]+)\s*(?:credits?|cr[ée]ditos?)\b/i);
+        if (!match?.[1])
+            return undefined;
+        const value = Number(match[1].replace(/[.,](?=\d{3}\b)/g, "").replace(",", "."));
+        return Number.isFinite(value) ? value : undefined;
+    }
+    /**
+     * Video length slider (input[type=range] "Length"). Reads its range in seconds
+     * and, when `seconds` is given, moves it there with the keyboard. Without
+     * `seconds` the original position is restored.
+     */
+    async setDuration(seconds) {
+        const slider = await firstVisible([
+            this.page.locator('input[type="range"][aria-label*="Length" i], input[type="range"][aria-label*="Dura" i], input[type="range"][aria-label*="Tempo" i]'),
+        ]);
+        if (!slider)
+            return { applied: false };
+        const label = async () => {
+            const text = await slider.evaluate((input) => {
+                const row = input.closest("mat-slider")?.parentElement;
+                return row?.innerText ?? input.getAttribute("aria-valuetext") ?? "";
+            }).catch(() => "");
+            const match = text.match(/(\d+(?:[.,]\d+)?)\s*(?:sec|seg|s)\b/i);
+            return match?.[1] ? Number(match[1].replace(",", ".")) : undefined;
+        };
+        const originalIndex = Number(await slider.inputValue().catch(() => "0")) || 0;
+        await slider.focus();
+        await this.page.keyboard.press("Home");
+        await sleep(150);
+        const min = await label();
+        await this.page.keyboard.press("End");
+        await sleep(150);
+        const max = await label();
+        const range = min !== undefined && max !== undefined ? { min, max } : undefined;
+        await this.page.keyboard.press("Home");
+        const steps = seconds !== undefined && range ? Math.max(0, Math.round(seconds - range.min)) : originalIndex;
+        if (seconds !== undefined && range && (seconds < range.min || seconds > range.max)) {
+            for (let index = 0; index < originalIndex; index += 1)
+                await this.page.keyboard.press("ArrowRight");
+            return { applied: false, range };
+        }
+        for (let index = 0; index < steps; index += 1)
+            await this.page.keyboard.press("ArrowRight");
+        await sleep(200);
+        if (seconds === undefined)
+            return { applied: true, ...(range ? { range } : {}) };
+        // Adjust if the slider's step is not exactly one second.
+        for (let guard = 0; guard < 20; guard += 1) {
+            const current = await label();
+            if (current === seconds || current === undefined)
+                break;
+            await this.page.keyboard.press(current < seconds ? "ArrowRight" : "ArrowLeft");
+            await sleep(120);
+        }
+        return { applied: (await label()) === seconds, ...(range ? { range } : {}) };
     }
     // ------------------------------------------------------------- uploads
     async handleCropDialog() {
@@ -715,7 +851,29 @@ export class FlowPage {
     }
     // ------------------------------------------------------------ download
     /** Fetches the asset bytes using the logged-in session (blob: via page, https: via context request). */
+    /** Video tiles only mount their <video> (the real MP4 URL) while hovered. */
+    async hoverVideoSource(snapshot) {
+        const tile = mediaLocator(this.page, "video").nth(snapshot.index);
+        await tile.scrollIntoViewIfNeeded().catch(() => undefined);
+        await tile.hover({ timeout: 10_000 }).catch(() => undefined);
+        const deadline = Date.now() + 8_000;
+        while (Date.now() < deadline) {
+            const src = await tile.evaluate((element) => {
+                const video = element instanceof HTMLVideoElement ? element : element.querySelector("video");
+                return video?.currentSrc || video?.getAttribute("src") || "";
+            }).catch(() => "");
+            if (src)
+                return new URL(src, this.page.url()).href;
+            await sleep(300);
+        }
+        return undefined;
+    }
     async fetchMedia(snapshot, type) {
+        if (!snapshot.sourceUrl && type === "video") {
+            const src = await this.hoverVideoSource(snapshot);
+            if (src)
+                snapshot = { ...snapshot, sourceUrl: src };
+        }
         if (!snapshot.sourceUrl) {
             return this.downloadViaMenu(snapshot, type);
         }
@@ -781,8 +939,10 @@ export class FlowPage {
         const downloadPromise = this.page.waitForEvent("download", { timeout: 120_000 });
         await item.locator.click();
         // Some versions open a resolution submenu; prefer original / non-upscaled entries.
+        // Never pick the animated GIF preview for videos.
         const submenu = await firstVisible([
-            this.page.getByRole("menuitem", { name: /original|tamanho original|full size|720p|1080p|gif/i }),
+            this.page.getByRole("menuitem", { name: /original size|tamanho original|full size|original/i }),
+            this.page.getByRole("menuitem", { name: /^(?!.*gif).*\b(?:1080p|720p|2k|4k)\b/i }),
         ]);
         if (submenu)
             await submenu.click().catch(() => undefined);
@@ -827,13 +987,20 @@ export class FlowPage {
                 return base64 ? Buffer.from(base64, "base64") : undefined;
             }
             const tile = mediaLocator(this.page, type).nth(snapshot.index);
-            const thumbSrc = await tile.evaluate((element) => {
+            const liveSrc = await tile.evaluate((element) => {
                 const image = element instanceof HTMLImageElement ? element : element.querySelector("img");
                 return image?.currentSrc || image?.src || "";
             }).catch(() => "");
-            if (thumbSrc && !thumbSrc.startsWith("blob:")) {
-                const response = await this.page.context().request.get(thumbSrc, { timeout: 20_000 });
-                const body = response.ok() ? await response.body() : undefined;
+            // After hovering, Flow swaps the poster <img> for a <video>; the poster URL captured
+            // in the snapshot (before hover) is still valid.
+            const candidates = [liveSrc, ...snapshot.keys.filter((key) => key.startsWith("url:")).map((key) => key.slice(4))]
+                .filter((url, index, all) => url && !url.startsWith("blob:") && all.indexOf(url) === index && url !== snapshot.sourceUrl);
+            for (const url of candidates) {
+                const response = await this.page.context().request.get(url, { timeout: 20_000 }).catch(() => undefined);
+                if (!response)
+                    continue;
+                const contentType = response.headers()["content-type"] ?? "";
+                const body = response.ok() && contentType.startsWith("image/") ? await response.body() : undefined;
                 await response.dispose();
                 if (body?.length)
                     return body;

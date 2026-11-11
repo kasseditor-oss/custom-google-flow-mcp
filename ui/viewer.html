@@ -112,10 +112,14 @@ function mediaKind(job) {
   return "video";
 }
 
-function overlay({ model, ratio, prompt }) {
+const ICON_CREDIT = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M12 2 21 12 12 22 3 12z"/></svg>';
+function overlay({ model, ratio, prompt, credits, duration, resolution }) {
   const chips = [
     `<span><img src="${LOGO}" alt="">${esc(model || "Google Flow")}</span>`,
+    credits !== undefined && credits !== null ? `<span class="dot">·</span><span title="créditos">${ICON_CREDIT}${esc(credits)}</span>` : "",
     ratio ? `<span class="dot">·</span><span class="ratio">${ratioBox(ratio)}${esc(ratio)}</span>` : "",
+    duration ? `<span class="dot">·</span><span>${esc(duration)}s</span>` : "",
+    resolution ? `<span class="dot">·</span><span>${esc(resolution)}</span>` : "",
   ].join("");
   return `<div class="overlay"><div class="chips">${chips}</div>${prompt ? `<div class="p">${esc(prompt)}</div>` : ""}</div>`;
 }
@@ -138,7 +142,7 @@ function renderPending(job) {
           <div class="phase" data-phase="${esc(phase)}">${esc(phase)} · ${elapsed()}</div>
         </div>
       </div>
-      ${overlay({ model: job?.model || args.model, ratio, prompt: job?.prompt || args.prompt })}
+      ${overlay({ model: job?.model || args.model, ratio, prompt: job?.prompt || args.prompt, duration: job?.duration_seconds || args.duration_seconds, resolution: job?.resolution || args.resolution })}
     </div>`;
 }
 
@@ -153,7 +157,7 @@ function renderJob(job) {
     $("main").innerHTML = `
       <div class="card">
         <div class="frame">${thumb}${isVideo ? '<div class="play"><span></span></div>' : ""}</div>
-        ${overlay({ model: job.model, ratio: job.aspect_ratio || (file?.width ? `${file.width}×${file.height}` : ""), prompt: job.prompt })}
+        ${overlay({ model: job.model, ratio: job.aspect_ratio || (file?.width ? `${file.width}×${file.height}` : ""), prompt: job.prompt, credits: job.credits, duration: job.duration_seconds || (file?.duration ? Math.round(file.duration) : undefined), resolution: job.resolution })}
       </div>
       ${files.length > 1 ? `<div class="tabs">${files.map((f, i) => `<button class="${i === index ? "on" : ""}" data-select="${i}" title="${esc(f.name)}">${f.thumbnail ? `<img src="${f.thumbnail}" alt="">` : i + 1}</button>`).join("")}</div>` : ""}
       <div class="actions">

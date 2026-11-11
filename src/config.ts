@@ -14,6 +14,20 @@ function intEnv(name: string, fallback: number, min: number, max: number): numbe
   return Math.min(max, Math.max(min, parsed));
 }
 
+export type HideMode = "hidden" | "offscreen" | "headless" | "visible";
+
+function hideMode(): HideMode {
+  const raw = (process.env.FLOW_MCP_HIDE_MODE ?? "").toLowerCase();
+  if (raw === "hidden" || raw === "offscreen" || raw === "headless" || raw === "visible") return raw;
+  // Simple switch: FLOW_MCP_BROWSER_VISIBILITY=hidden (default) | visible.
+  const visibility = (process.env.FLOW_MCP_BROWSER_VISIBILITY ?? "").toLowerCase();
+  if (visibility === "visible") return "visible";
+  if (visibility === "hidden") return process.platform === "win32" ? "hidden" : "offscreen";
+  if (process.env.FLOW_MCP_HEADLESS === "0") return "visible";
+  if (process.env.FLOW_MCP_HEADLESS === "1") return "headless";
+  return process.platform === "win32" ? "hidden" : "offscreen";
+}
+
 function browserMode(): BrowserMode {
   const raw = (process.env.FLOW_MCP_BROWSER_MODE ?? "auto").toLowerCase();
   return raw === "cdp" || raw === "launch" ? raw : "auto";
@@ -34,8 +48,25 @@ export const config = {
   cdpPort: Number.parseInt(new URL(cdpUrl).port || "9222", 10),
   userDataDir: process.env.FLOW_MCP_USER_DATA_DIR ?? path.join(dataDir, "chrome-profile"),
   browserExecutable: process.env.FLOW_MCP_BROWSER_EXECUTABLE,
-  /** Invisible browser by default (no window, no taskbar). FLOW_MCP_HEADLESS=0 shows it. */
-  headless: process.env.FLOW_MCP_HEADLESS !== "0",
+  /**
+   * How the MCP-launched browser stays out of sight:
+   *  - "hidden"    (Windows default): real, non-headless browser whose windows are hidden via Win32 (no window, no taskbar).
+   *  - "offscreen" (macOS/Linux default): real browser placed off-screen.
+   *  - "headless":  Chromium headless. Not recommended: Google may end the sign-in session.
+   *  - "visible":   normal window (debugging).
+   */
+  hideMode: hideMode(),
+  get headless(): boolean {
+    return this.hideMode === "headless";
+  },
+  /**
+   * When Google sign-in is needed, automatically reopen the dedicated browser as a
+   * normal visible window, wait for the user to sign in, then go back to hidden.
+   * FLOW_MCP_AUTO_LOGIN=0 disables it (login_required is returned instead).
+   */
+  autoLogin: process.env.FLOW_MCP_AUTO_LOGIN !== "0",
+  /** How long the visible sign-in window waits for the user. */
+  loginTimeoutSeconds: intEnv("FLOW_MCP_LOGIN_TIMEOUT_SECONDS", 600, 60, 3_600),
   /** Close the browser the MCP launched after this many idle seconds (0 = keep open). */
   idleCloseSeconds: intEnv("FLOW_MCP_IDLE_CLOSE_SECONDS", 90, 0, 86_400),
   dataDir,

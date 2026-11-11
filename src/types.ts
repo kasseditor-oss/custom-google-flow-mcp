@@ -1,6 +1,8 @@
 export type MediaKind = "video" | "image";
 
-export const ASPECT_RATIOS = ["16:9", "9:16", "1:1"] as const;
+/** Images accept all five; Flow video currently offers only 16:9 and 9:16. */
+export const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"] as const;
+export const VIDEO_ASPECT_RATIOS = ["16:9", "9:16"] as const;
 export type AspectRatio = (typeof ASPECT_RATIOS)[number];
 
 export const CAMERA_MOTIONS = [
@@ -27,6 +29,10 @@ export interface GenerationSpec {
   aspectRatio?: AspectRatio;
   cameraMotion?: CameraMotion;
   outputsCount: number;
+  /** Video length in seconds (range depends on the model; read live from Flow). */
+  durationSeconds?: number;
+  /** Video resolution label as shown by Flow, e.g. "720p" or "360p". */
+  resolution?: string;
   model?: string;
   startFrame?: string;
   endFrame?: string;
@@ -68,6 +74,8 @@ export interface GenerationResult {
   flowProjectUrl: string;
   /** Model label shown by Flow at submit time (e.g. "Nano Banana 2.1", "Veo 3.1 - Fast"). */
   modelUsed?: string;
+  /** Credits Flow announced for this generation ("Generating will use N credits"). */
+  creditsEstimated?: number;
   applied: Record<string, AppliedVia>;
   warnings: string[];
 }

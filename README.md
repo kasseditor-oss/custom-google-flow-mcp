@@ -54,6 +54,19 @@ npx -y github:kasseditor-oss/custom-google-flow-mcp auth
 Cole no Claude Code: *"Instale o MCP https://github.com/kasseditor-oss/custom-google-flow-mcp rodando
 `npx -y github:kasseditor-oss/custom-google-flow-mcp install` e depois rode o comando `auth` dele."*
 
+## Opções de geração e custo
+
+* **Quantidade:** `outputs_count` 1–4. **Padrão: 1.** Arquivos múltiplos saem como `_v1` … `_v4`.
+* **Vídeo:** `aspect_ratio` `9:16` (TikTok, Reels, Shorts) ou `16:9` (YouTube); `duration_seconds` (limite lido ao vivo
+  do Flow, ex.: Omni 1.2 Flash = 3–15 s); `resolution` `360p` / `720p`; `model` (Omni 1.2 Flash, Veo 3.1 …).
+* **Imagem:** `aspect_ratio` `16:9`, `4:3`, `1:1`, `3:4`, `9:16`.
+* **Escolha antes de gerar:** quando o pedido não diz a quantidade (e, no vídeo, formato/duração/resolução), o MCP abre
+  um diálogo nativo do cliente (MCP *elicitation*) mostrando o custo que o próprio Flow anuncia
+  ("Generating will use N credits"). Cancelar não gasta nada. Clientes sem esse recurso usam os padrões.
+  `ask_options: false` ou `FLOW_MCP_ASK_OPTIONS=never` pulam o diálogo.
+* **`flow_estimate_cost`:** consulta o custo em créditos e as opções permitidas sem gerar.
+* O resultado e o widget mostram os créditos gastos (`credits_used`).
+
 ## Visual no chat (MCP Apps)
 
 As tools de geração abrem um **widget dentro do chat** (padrão oficial MCP Apps, o mesmo usado por conectores
@@ -68,10 +81,17 @@ com o progresso de cada take.
 
 ## Navegador invisível
 
-Depois do `auth`, o MCP usa o perfil logado em **modo headless**: nenhuma janela ou ícone aparece. O navegador abre só
-quando há trabalho e fecha sozinho após `FLOW_MCP_IDLE_CLOSE_SECONDS` (padrão 90 s) sem uso, e também quando o MCP
-encerra. Um navegador que *você* abriu (ex.: o do `auth`) nunca é fechado pelo MCP. Para ver o que ele faz:
-`FLOW_MCP_HEADLESS=0`.
+O MCP usa o perfil dedicado num navegador **invisível** (no Windows: navegador real com as janelas ocultadas via
+Win32 — sem janela e sem ícone na barra de tarefas). Ele abre só quando há trabalho e fecha sozinho após
+`FLOW_MCP_IDLE_CLOSE_SECONDS` (padrão 90 s) sem uso, e também quando o MCP encerra.
+
+**Login automático:** se o Google pedir login, o MCP fecha o navegador invisível, abre **uma janela normal** no Flow
+(mesmo perfil), espera você entrar (até `FLOW_MCP_LOGIN_TIMEOUT_SECONDS`, padrão 600 s), fecha a janela e continua
+invisível. `FLOW_MCP_AUTO_LOGIN=0` desliga isso (volta a retornar `login_required` / `npm run auth`).
+
+Variáveis: `FLOW_MCP_BROWSER_VISIBILITY=hidden|visible` (padrão `hidden`; `visible` mostra sempre a janela, para
+depurar). Avançado: `FLOW_MCP_HIDE_MODE=hidden|offscreen|headless|visible`. Um navegador que *você* abriu na porta
+CDP nunca é fechado nem ocultado pelo MCP.
 
 ## Tools
 
@@ -84,6 +104,7 @@ encerra. Um navegador que *você* abriu (ex.: o do `auth`) nunca é fechado pelo
 | `flow_generate_image` | Imagens (Nano Banana / Imagen dentro do Flow). |
 | `flow_generate_batch` | Storyboard inteiro em background: concorrência 1–4, retry com backoff exponencial, manifesto. |
 | `flow_get_queue_status` | Progresso de lote/job sem bloquear. |
+| `flow_estimate_cost` | Mostra quantos créditos a geração vai gastar e as opções permitidas, sem gerar. |
 | `flow_cancel` | Cancela job ou lote. |
 | `flow_preview`, `flow_open_file` | Usadas só pelo widget do chat (ocultas do modelo). |
 

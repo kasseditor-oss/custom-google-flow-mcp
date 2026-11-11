@@ -2,6 +2,7 @@ import { copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "playwright-core";
 import { BrowserSession } from "./browser/session.js";
+import { log } from "./logger.js";
 import { isCdpReachable } from "./browser/chrome.js";
 import { config } from "./config.js";
 import { probeSelector, resolveSelector, type SelectorProbe } from "./dom.js";
@@ -72,6 +73,11 @@ export async function checkSession(session: BrowserSession, busy: boolean): Prom
   });
   report.ready = Boolean(report.access?.workspaceAvailable);
   report.next_step = nextStep(report.access);
+  if (report.access && !report.access.signedIn && session.canInteractiveLogin) {
+    // Open the visible sign-in window in the background; it hides itself again once signed in.
+    void session.interactiveLogin().catch((error) => log.warn("Interactive sign-in did not complete", error));
+    report.next_step = "Not signed in: a Chrome window was opened for Google sign-in. Ask the user to sign in there; it closes by itself afterwards and work continues invisibly. Then call flow_check_session again.";
+  }
   return report;
 }
 

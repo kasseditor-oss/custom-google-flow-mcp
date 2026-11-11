@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { config } from "../config.js";
+import { config, PROJECT_ROOT } from "../config.js";
 import { FlowError } from "../errors.js";
 import { log } from "../logger.js";
 /** Last-resort: Chromium builds downloaded by Playwright (newest first). */
@@ -112,9 +112,38 @@ export async function cdpUserAgent(cdpUrl) {
         return undefined;
     }
 }
+/**
+ * While this file exists the dedicated browser is meant to be visible (sign-in):
+ * any window hider still running from a previous hidden launch exits instead of
+ * hiding the sign-in window.
+ */
+export function visibleFlag() {
+    return path.join(config.dataDir, "browser-visible.flag");
+}
+/** Starts scripts/hide-windows.ps1, which keeps the dedicated browser's windows hidden until it quits. */
+export function startWindowHider() {
+    const script = path.join(PROJECT_ROOT, "scripts", "hide-windows.ps1");
+    if (process.platform !== "win32" || !existsSync(script))
+        return;
+    const hider = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script, "-ProfileDir", config.userDataDir, "-VisibleFlag", visibleFlag()], 
+    // A detached PowerShell with ignored stdio exits immediately on Windows; keep pipes and drain them.
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    hider.stdout?.resume();
+    hider.stderr?.on("data", (chunk) => log.debug(`window hider: ${chunk.toString().trim()}`));
+    hider.on("error", (error) => log.warn("Window hider failed to start", error));
+    hider.unref();
+    hider.stdout?.unref?.();
+    hider.stderr?.unref?.();
+}
 export function launchChrome(options) {
     const executable = findChromeExecutable();
     mkdirSync(config.userDataDir, { recursive: true });
+    mkdirSync(config.dataDir, { recursive: true });
+    const visible = !options.hidden && !options.headless;
+    if (visible)
+        writeFileSync(visibleFlag(), new Date().toISOString(), "utf8");
+    else
+        rmSync(visibleFlag(), { force: true });
     const args = [
         `--remote-debugging-port=${config.cdpPort}`,
         "--remote-debugging-address=127.0.0.1",
@@ -127,9 +156,20 @@ export function launchChrome(options) {
         "--disable-backgrounding-occluded-windows",
         "--lang=pt-BR",
         ...(options.headless ? ["--headless=new", "--window-size=1600,1000", "--mute-audio"] : ["--window-size=1600,1000"]),
+        // Hidden/off-screen: a real browser window placed far outside the desktop (and hidden via Win32 on Windows).
+        // Translate / crash-restore bubbles are separate windows that Chrome clamps onto a real
+        // monitor (e.g. a second screen at x<0), so suppress them in hidden mode.
+        ...(options.hidden
+            ? ["--window-position=-32000,-32000", "--mute-audio", "--disable-features=Translate", "--hide-crash-restore-bubble"]
+            : []),
+        // Visible (sign-in): force the window back on-screen even if the profile remembers the off-screen position.
+        ...(visible ? ["--window-position=80,60"] : []),
         ...(options.userAgent ? [`--user-agent=${options.userAgent}`] : []),
         options.url,
     ];
+    // Start the hider first so it is already running when the first window appears.
+    if (options.hidden)
+        startWindowHider();
     log.info(`Launching Chrome: ${executable} (profile ${config.userDataDir}, CDP port ${config.cdpPort})`);
     const child = spawn(executable, args, {
         detached: options.detached ?? true,

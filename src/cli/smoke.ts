@@ -35,7 +35,7 @@ const missing = EXPECTED.filter((name) => !names.includes(name));
 const status = await client.callTool({ name: "flow_get_queue_status", arguments: {} });
 const invalid = await client.callTool({ name: "flow_image_to_video", arguments: { prompt: "test prompt" } });
 process.stdout.write(`${JSON.stringify({
-  server: info,
+  server: { name: info?.name, version: info?.version, hasIcon: Boolean(info?.icons?.length) },
   tools: names,
   missing,
   queueStatusOk: !status.isError,

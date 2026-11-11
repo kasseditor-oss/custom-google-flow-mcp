@@ -4,7 +4,7 @@ import type { Page } from "playwright-core";
 import { BrowserSession } from "./browser/session.js";
 import { isCdpReachable } from "./browser/chrome.js";
 import { config } from "./config.js";
-import { probeSelector, type SelectorProbe } from "./dom.js";
+import { probeSelector, resolveSelector, type SelectorProbe } from "./dom.js";
 import { errorText } from "./errors.js";
 import { FlowPage, type AccessState } from "./flow/flow-page.js";
 import { isFlowUrl } from "./flow/urls.js";
@@ -103,7 +103,16 @@ export async function healthCheck(session: BrowserSession, options: { busy: bool
       else if (!access.workspaceAvailable) report.failures.push("Flow workspace is not available for this account.");
 
       const keys = access.pageKind === "project" ? HEALTH_CHECK_KEYS : HOME_KEYS;
-      for (const key of keys) report.selectors.push(await probeSelector(page, key));
+      // The project SPA re-renders after navigation; wait for the editor before probing.
+      if (access.pageKind === "project") await resolveSelector(page, "promptInput", { timeoutMs: 20_000 });
+      let probes: SelectorProbe[] = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        probes = [];
+        for (const key of keys) probes.push(await probeSelector(page, key));
+        if (probes.every((probe) => !probe.critical || probe.found)) break;
+        await page.waitForTimeout(2_500);
+      }
+      report.selectors.push(...probes);
       for (const probe of report.selectors) {
         if (probe.critical && !probe.found) report.failures.push(`Critical selector '${probe.key}' (${probe.description}) not found.`);
       }

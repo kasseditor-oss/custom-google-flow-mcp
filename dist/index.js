@@ -15,7 +15,7 @@ import { updateManifest } from "./output/manifest.js";
 import { projectDirectory, resolveOutputRoot } from "./output/naming.js";
 import { JobQueue, isTerminal } from "./queue/job-queue.js";
 import { ASPECT_RATIOS, VIDEO_ASPECT_RATIOS, CAMERA_MOTIONS } from "./types.js";
-import { UI_APP_ONLY_META, UI_MIME_TYPE, UI_RESOURCE_URI, UI_TOOL_META, brandIconDataUri, iconDataUri, jobPreview, openLocalFile, readThumbnail, viewerHtml } from "./ui.js";
+import { FLOW_ICON_URL, UI_APP_ONLY_META, UI_MIME_TYPE, UI_RESOURCE_URI, UI_TOOL_META, brandIconDataUri, iconDataUri, jobPreview, openLocalFile, readThumbnail, viewerHtml } from "./ui.js";
 const VERSION = "1.2.0";
 /** Official Flow icon (cached locally after the first download; generic logo if offline). */
 const brandIcon = await brandIconDataUri();
@@ -51,10 +51,15 @@ queue.onJobFinished = async (_job, batch) => {
     });
 };
 /** Text JSON + structuredContent (for the widget) + inline thumbnails (for hosts without MCP Apps). */
+/** True when the connected host declared MCP Apps support (io.modelcontextprotocol/ui). */
+function hostRendersWidget() {
+    const capabilities = server.server.getClientCapabilities();
+    return Boolean(capabilities?.extensions?.["io.modelcontextprotocol/ui"]);
+}
 function jobResult(job, extra = {}) {
     const view = { ...jobView(job), ...extra };
     const images = [];
-    for (const file of (job.result?.files ?? []).slice(0, 4)) {
+    for (const file of (hostRendersWidget() ? [] : (job.result?.files ?? []).slice(0, 4))) {
         const data = readThumbnail(file.thumbnail);
         if (data)
             images.push({ type: "image", data, mimeType: "image/jpeg" });
@@ -216,7 +221,12 @@ const server = new McpServer({
     title: "Google Flow",
     version: VERSION,
     ...(brandIcon
-        ? { icons: [{ src: brandIcon, mimeType: "image/png", sizes: ["192x192"] }] }
+        ? {
+            icons: [
+                { src: FLOW_ICON_URL, mimeType: "image/png", sizes: ["192x192"] },
+                { src: brandIcon, mimeType: "image/png", sizes: ["192x192"] },
+            ],
+        }
         : iconDataUri() ? { icons: [{ src: iconDataUri(), mimeType: "image/svg+xml", sizes: ["any"] }] } : {}),
 }, {
     instructions: [
@@ -657,7 +667,7 @@ server.registerResource("google-flow-viewer", UI_RESOURCE_URI, {
     contents: [{
             uri: UI_RESOURCE_URI,
             mimeType: UI_MIME_TYPE,
-            text: viewerHtml((await brandIconDataUri()) ?? brandIcon),
+            text: (log.info(`Host requested the widget resource ${UI_RESOURCE_URI}.`), viewerHtml((await brandIconDataUri()) ?? brandIcon)),
             _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } },
         }],
 }));
@@ -735,6 +745,11 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.stdin.on("close", () => shutdown("stdin closed"));
 process.on("unhandledRejection", (reason) => log.error("Unhandled rejection", reason));
+server.server.oninitialized = () => {
+    const client = server.server.getClientVersion();
+    const capabilities = server.server.getClientCapabilities();
+    log.info(`Client connected: ${client?.name ?? "?"} ${client?.version ?? ""} | MCP Apps widget: ${hostRendersWidget() ? "supported" : "NOT declared"} | elicitation: ${capabilities?.elicitation ? "yes" : "no"} | capabilities: ${JSON.stringify(capabilities ?? {})}`);
+};
 const transport = new StdioServerTransport();
 await server.connect(transport);
 log.info(`custom-google-flow-mcp ${VERSION} ready on stdio (browser mode ${config.browserMode}, CDP ${config.cdpUrl}, output root ${config.outputRoot}).`);

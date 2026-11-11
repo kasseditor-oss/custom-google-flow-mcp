@@ -37,7 +37,7 @@ export function viewerHtml(brandIcon?: string): string {
  * Official Google Flow app icon, downloaded from Google's public static host on
  * the user's machine and cached locally. It is never shipped in this repository.
  */
-const FLOW_ICON_URL = "https://www.gstatic.com/aitestkitchen/website/flow/favicon/flow_icon_192.png";
+export const FLOW_ICON_URL = "https://www.gstatic.com/aitestkitchen/website/flow/favicon/flow_icon_192.png";
 let brandIconPromise: Promise<string | undefined> | undefined;
 export function brandIconDataUri(): Promise<string | undefined> {
   brandIconPromise ??= (async () => {

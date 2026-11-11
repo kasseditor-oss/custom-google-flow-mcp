@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Google Flow</title>
+<style>
+  :root {
+    --bg: transparent; --card: #f3f4f7; --line: #e2e5ec; --text: #15181f; --muted: #646c7e;
+    --ok: #10a36b; --warn: #c98a05; --err: #d33a4a;
+    --brand: linear-gradient(120deg, #3d7bff, #8b5cf6 55%, #f0569b);
+    --btn: #1f2229; --btn-text: #fff;
+    --radius: 16px;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] { --card: #1f2024; --line: #2d2f36; --text: #eef0f5; --muted: #9aa1b2; --btn: #2b2d34; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { padding: 4px 2px 6px; font-size: 14px; line-height: 1.4; }
+
+  .card { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--card); border: 1px solid var(--line); }
+  .frame { position: relative; display: flex; justify-content: center; background: #0d0e11; }
+  .frame img { display: block; max-width: 100%; max-height: 460px; width: auto; height: auto; object-fit: contain; cursor: zoom-in; }
+  .frame .play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+  .frame .play span { width: 54px; height: 54px; border-radius: 50%; background: rgba(0,0,0,.5); backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; }
+  .frame .play span::before { content: ""; border-style: solid; border-width: 10px 0 10px 17px; border-color: transparent transparent transparent #fff; margin-left: 5px; }
+
+  .overlay { position: absolute; left: 0; right: 0; bottom: 0; padding: 34px 16px 12px; background: linear-gradient(to top, rgba(10,11,14,.88), rgba(10,11,14,.55) 60%, transparent); color: #fff; pointer-events: none; }
+  .overlay .chips { display: flex; align-items: center; gap: 10px; font-size: 12.5px; font-weight: 650; margin-bottom: 4px; flex-wrap: wrap; }
+  .overlay .chips .dot { opacity: .5; }
+  .overlay .chips img { width: 15px; height: 15px; border-radius: 4px; vertical-align: -3px; margin-right: 5px; }
+  .overlay .ratio { display: inline-flex; align-items: center; gap: 5px; opacity: .9; }
+  .overlay .ratio i { display: inline-block; border: 1.6px solid currentColor; border-radius: 2px; }
+  .overlay .p { font-size: 13px; color: rgba(255,255,255,.82); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn { font: inherit; font-size: 13px; font-weight: 650; border: 0; border-radius: 10px; padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; color: var(--btn-text); background: var(--btn); }
+  .btn.primary { background: var(--brand); }
+  .btn:hover { filter: brightness(1.12); }
+  .btn svg { width: 15px; height: 15px; }
+  .tabs { display: flex; gap: 6px; margin-top: 8px; }
+  .tabs button { width: 46px; height: 46px; padding: 0; border-radius: 10px; overflow: hidden; border: 2px solid transparent; background: #000; cursor: pointer; }
+  .tabs button.on { border-color: #8b5cf6; }
+  .tabs img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  .stage { position: relative; display: flex; align-items: center; justify-content: center; background: #121318; max-height: 460px; margin: 0 auto; }
+  .shimmer { position: absolute; inset: 0; background: var(--brand); opacity: .22; }
+  .shimmer::after { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,.22) 50%, transparent 80%); transform: translateX(-100%); animation: sweep 1.8s ease-in-out infinite; }
+  @keyframes sweep { to { transform: translateX(100%); } }
+  .stage .center { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 16px; color: #fff; }
+  .stage .center img { width: 46px; height: 46px; border-radius: 13px; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { transform: scale(1.08); filter: saturate(1.4); } }
+  .stage .label { font-weight: 650; }
+  .stage .phase { color: rgba(255,255,255,.72); font-size: 12.5px; }
+
+  .error { border: 1px solid color-mix(in srgb, var(--err) 40%, var(--line)); background: color-mix(in srgb, var(--err) 9%, var(--card)); border-radius: var(--radius); padding: 12px 14px; font-size: 13px; }
+  .error b { color: var(--err); }
+  .note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .warn { color: var(--warn); font-size: 12px; margin-top: 6px; }
+
+  .bhead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+  .bhead img { width: 22px; height: 22px; border-radius: 6px; }
+  .bhead .grow { flex: 1; font-weight: 650; }
+  .bhead .muted { color: var(--muted); }
+  .bar { height: 6px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); overflow: hidden; margin-bottom: 12px; }
+  .bar > div { height: 100%; background: var(--brand); transition: width .4s ease; }
+  .grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .take { border-radius: 12px; background: var(--card); border: 1px solid var(--line); overflow: hidden; }
+  .take .ph { aspect-ratio: 16/9; position: relative; overflow: hidden; background: #121318; cursor: pointer; }
+  .take .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .take .ph .st { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.8); font-size: 12px; font-weight: 600; text-align: center; padding: 8px; }
+  .take .cap { padding: 7px 10px; font-size: 12px; }
+  .take .cap b { display: block; font-size: 12.5px; }
+  .take .cap .p { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body>
+<main id="main"></main>
+
+<script type="module">
+/*__EXT_APPS_BUNDLE__*/
+</script>
+<script type="module">
+const { App } = window.McpExtApps;
+const LOGO = "__LOGO_DATA_URI__";
+const POLL_MS = 3000;
+const STATUS_PT = { queued: "na fila", running: "gerando", retry_wait: "nova tentativa", completed: "pronto", failed: "falhou", cancelled: "cancelado", interrupted: "interrompido" };
+const ICON_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>';
+const ICON_FOLDER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+
+const state = { input: null, toolName: "", jobId: null, batchId: null, thumbs: new Map(), timer: null, started: Date.now(), selected: 0, lastJob: null };
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const ratioCss = (r) => ({ "9:16": "9/16", "1:1": "1/1", "4:3": "4/3", "3:4": "3/4" }[r] || "16/9");
+const ratioBox = (r) => { const [w, h] = String(r || "16:9").split(":").map(Number); const s = 11 / Math.max(w, h); return `<i style="width:${Math.round(w * s)}px;height:${Math.round(h * s)}px"></i>`; };
+
+const app = new App({ name: "Google Flow Viewer", version: "1.2.0" }, {}, { autoResize: true });
+
+function applyTheme(ctx) {
+  const theme = ctx?.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = theme;
+}
+
+function elapsed() {
+  const s = Math.round((Date.now() - state.started) / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}min ${s % 60}s`;
+}
+
+function mediaKind(job) {
+  if (job?.media_type) return job.media_type;
+  if (/image/.test(state.toolName) && !/to_video/.test(state.toolName)) return "image";
+  return "video";
+}
+
+function overlay({ model, ratio, prompt }) {
+  const chips = [
+    `<span><img src="${LOGO}" alt="">${esc(model || "Google Flow")}</span>`,
+    ratio ? `<span class="dot">·</span><span class="ratio">${ratioBox(ratio)}${esc(ratio)}</span>` : "",
+  ].join("");
+  return `<div class="overlay"><div class="chips">${chips}</div>${prompt ? `<div class="p">${esc(prompt)}</div>` : ""}</div>`;
+}
+
+function renderPending(job) {
+  const args = state.input || {};
+  const kind = mediaKind(job);
+  const ratio = job?.aspect_ratio || args.aspect_ratio || (kind === "image" ? "1:1" : "16:9");
+  const phase = job?.status === "queued" ? "Na fila"
+    : job?.status === "retry_wait" ? `Nova tentativa ${job.next_retry_at ? "às " + new Date(job.next_retry_at).toLocaleTimeString() : "em breve"}`
+    : (job?.phase || "Preparando").replace(/^generating: /, "Gerando: ").replace(/ready/, "prontos");
+  const tall = ratio === "9:16" || ratio === "3:4";
+  $("main").innerHTML = `
+    <div class="card">
+      <div class="stage" style="aspect-ratio:${ratioCss(ratio)};${tall ? "max-width:300px;" : ""}">
+        <div class="shimmer"></div>
+        <div class="center">
+          <img src="${LOGO}" alt="">
+          <div class="label">${kind === "image" ? "Gerando imagem no Google Flow…" : "Gerando vídeo no Google Flow…"}</div>
+          <div class="phase" data-phase="${esc(phase)}">${esc(phase)} · ${elapsed()}</div>
+        </div>
+      </div>
+      ${overlay({ model: job?.model || args.model, ratio, prompt: job?.prompt || args.prompt })}
+    </div>`;
+}
+
+function renderJob(job) {
+  state.lastJob = job;
+  if (job.status === "completed") {
+    const files = job.files || [];
+    const index = Math.min(state.selected, Math.max(files.length - 1, 0));
+    const file = files[index];
+    const isVideo = job.media_type === "video";
+    const thumb = file?.thumbnail ? `<img src="${file.thumbnail}" alt="" data-open="${esc(file.path)}">` : `<div style="aspect-ratio:${ratioCss(job.aspect_ratio)};width:100%"></div>`;
+    $("main").innerHTML = `
+      <div class="card">
+        <div class="frame">${thumb}${isVideo ? '<div class="play"><span></span></div>' : ""}</div>
+        ${overlay({ model: job.model, ratio: job.aspect_ratio || (file?.width ? `${file.width}×${file.height}` : ""), prompt: job.prompt })}
+      </div>
+      ${files.length > 1 ? `<div class="tabs">${files.map((f, i) => `<button class="${i === index ? "on" : ""}" data-select="${i}" title="${esc(f.name)}">${f.thumbnail ? `<img src="${f.thumbnail}" alt="">` : i + 1}</button>`).join("")}</div>` : ""}
+      <div class="actions">
+        ${file ? `<button class="btn primary" data-open="${esc(file.path)}">${ICON_OPEN}${isVideo ? "Assistir" : "Abrir"}</button>
+        <button class="btn" data-reveal="${esc(file.path)}">${ICON_FOLDER}Mostrar na pasta</button>` : ""}
+      </div>
+      ${file ? `<div class="note">${esc(file.name)}${isVideo && file.duration ? ` · ${file.duration.toFixed(1)}s` : ""}${job.attempts > 1 ? ` · ${job.attempts} tentativas` : ""}</div>` : ""}
+      ${(job.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("")}`;
+    return;
+  }
+  if (["failed", "cancelled", "interrupted"].includes(job.status)) {
+    $("main").innerHTML = `<div class="error"><b>Google Flow · ${esc(STATUS_PT[job.status])}</b><br>${esc(job.error || "")}${job.error_code ? ` <code>${esc(job.error_code)}</code>` : ""}</div>`;
+    return;
+  }
+  renderPending(job);
+}
+
+function renderBatch(data) {
+  const pct = data.progress_percent ?? 0;
+  const takes = (data.jobs || []).map((job) => {
+    const file = (job.files || [])[0];
+    const title = `Cena ${esc(job.scene_id ?? "-")} · Take ${esc(job.take_number ?? "-")}`;
+    const failed = ["failed", "cancelled", "interrupted"].includes(job.status);
+    const ph = job.status === "completed" && file
+      ? `<div class="ph" data-open="${esc(file.path)}">${file.thumbnail ? `<img src="${file.thumbnail}" alt="">` : ""}</div>`
+      : `<div class="ph">${failed ? "" : '<div class="shimmer"></div>'}<div class="st" style="${failed ? "color:#ff8a95" : ""}">${esc(failed ? (job.error || STATUS_PT[job.status]).slice(0, 110) : (job.phase || STATUS_PT[job.status]).replace(/^generating: /, ""))}</div></div>`;
+    return `<div class="take">${ph}<div class="cap"><b>${title}</b><div class="p">${esc(file ? file.name : job.prompt)}</div></div></div>`;
+  }).join("");
+  $("main").innerHTML = `
+    <div class="bhead"><img src="${LOGO}" alt=""><span class="grow">Storyboard · ${esc(data.project_name)}</span><span class="muted">${data.counts?.completed ?? 0}/${data.total} · ${pct}%${data.counts?.failed ? ` · ${data.counts.failed} falharam` : ""}</span></div>
+    <div class="bar"><div style="width:${pct}%"></div></div>
+    <div class="grid">${takes}</div>`;
+}
+
+async function poll() {
+  clearTimeout(state.timer);
+  if (!state.jobId && !state.batchId) return;
+  try {
+    const wanted = [...state.thumbs.keys()].filter((id) => !state.thumbs.get(id));
+    const res = await app.callServerTool({
+      name: "flow_preview",
+      arguments: state.batchId ? { batch_id: state.batchId, thumbnails_for: wanted } : { job_id: state.jobId },
+    });
+    const data = res.structuredContent;
+    if (!data) throw new Error(res.content?.[0]?.text || "sem dados");
+    for (const job of data.jobs || []) {
+      if (job.status !== "completed") continue;
+      if (job.files?.some((f) => f.thumbnail)) state.thumbs.set(job.job_id, job.files);
+      else if (state.thumbs.get(job.job_id)) job.files = state.thumbs.get(job.job_id);
+      else state.thumbs.set(job.job_id, null);
+    }
+    if (state.batchId) renderBatch(data);
+    else if (data.jobs?.[0]) renderJob(data.jobs[0]);
+    const pendingThumbs = state.batchId && [...state.thumbs.values()].some((v) => v === null);
+    if (!data.done || pendingThumbs) state.timer = setTimeout(poll, data.done ? 300 : POLL_MS);
+  } catch (error) {
+    state.timer = setTimeout(poll, POLL_MS * 2);
+  }
+}
+
+function handleResult(result) {
+  let data = result?.structuredContent;
+  if (!data) {
+    try { data = JSON.parse(result?.content?.find((c) => c.type === "text")?.text || "{}"); } catch { data = {}; }
+  }
+  if (result?.isError && !data.job_id && !data.batch_id) {
+    $("main").innerHTML = `<div class="error"><b>Google Flow · erro</b><br>${esc(result?.content?.[0]?.text || "falha")}</div>`;
+    return;
+  }
+  if (data.batch_id && !data.job_id) state.batchId = data.batch_id;
+  else if (data.job_id) state.jobId = data.job_id;
+  poll();
+}
+
+document.addEventListener("click", async (event) => {
+  const select = event.target.closest("[data-select]");
+  if (select && state.lastJob) {
+    state.selected = Number(select.getAttribute("data-select"));
+    renderJob(state.lastJob);
+    return;
+  }
+  const target = event.target.closest("[data-open],[data-reveal]");
+  if (!target) return;
+  const reveal = target.hasAttribute("data-reveal");
+  const path = target.getAttribute(reveal ? "data-reveal" : "data-open");
+  await app.callServerTool({ name: "flow_open_file", arguments: { path, reveal } }).catch(() => undefined);
+});
+
+app.ontoolinput = (params) => {
+  state.input = params?.arguments || {};
+  state.started = Date.now();
+  state.toolName = app.getHostContext()?.toolInfo?.tool?.name || state.toolName;
+  if (Array.isArray(state.input.scenes)) {
+    renderBatch({ project_name: state.input.project_name, total: state.input.scenes.length, progress_percent: 0, counts: {},
+      jobs: state.input.scenes.map((s, i) => ({ status: "queued", scene_id: s.scene_id ?? 1, take_number: s.take_number ?? i + 1, prompt: s.prompt })) });
+  } else {
+    renderPending(null);
+  }
+};
+app.ontoolresult = (params) => handleResult(params);
+app.ontoolcancelled = () => { $("main").innerHTML = `<div class="error"><b>Google Flow · cancelado</b></div>`; };
+app.onhostcontextchanged = (ctx) => {
+  applyTheme({ ...app.getHostContext(), ...ctx });
+  state.toolName = ctx?.toolInfo?.tool?.name || state.toolName;
+};
+app.onteardown = async () => { clearTimeout(state.timer); return {}; };
+
+setInterval(() => {
+  const phase = document.querySelector(".stage .phase");
+  if (phase) phase.textContent = `${phase.dataset.phase} · ${elapsed()}`;
+}, 1000);
+
+applyTheme(null);
+await app.connect();
+applyTheme(app.getHostContext());
+state.toolName = app.getHostContext()?.toolInfo?.tool?.name || "";
+</script>
+</body>
+</html>

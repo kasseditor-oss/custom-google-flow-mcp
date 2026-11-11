@@ -57,6 +57,8 @@ export interface SavedAsset {
   sizeBytes: number;
   sha256: string;
   probe?: MediaProbe;
+  /** Small JPEG preview (local path) used by the chat widget and inline image results. */
+  thumbnail?: string;
 }
 
 export interface GenerationResult {
@@ -64,6 +66,8 @@ export interface GenerationResult {
   manifestPath: string;
   finalPrompt: string;
   flowProjectUrl: string;
+  /** Model label shown by Flow at submit time (e.g. "Nano Banana 2.1", "Veo 3.1 - Fast"). */
+  modelUsed?: string;
   applied: Record<string, AppliedVia>;
   warnings: string[];
 }

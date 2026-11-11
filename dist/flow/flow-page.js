@@ -168,19 +168,20 @@ export class FlowPage {
     }
     // --------------------------------------------------------------- settings
     async openSettings() {
-        const alreadyOpen = await firstVisible([this.page.locator('[role="tablist"]'), SELECTORS.autoApproveRadio.strategies[0].locate(this.page)]);
-        if (alreadyOpen)
+        if (await this.settingsPanelOpen())
             return true;
         const button = await resolveSelector(this.page, "settingsButton", { timeoutMs: 2_000, last: true });
         if (!button)
             return false;
         await button.locator.click();
         await sleep(500);
-        return Boolean(await firstVisible([
-            this.page.locator('[role="tablist"]'),
+        return (await this.settingsPanelOpen()) || Boolean(await firstVisible([
             this.page.locator('[role="dialog"], [role="menu"], [role="listbox"]'),
             SELECTORS.autoApproveRadio.strategies[0].locate(this.page),
         ]));
+    }
+    async settingsPanelOpen() {
+        return Boolean(await firstVisible([this.page.locator('[role="radiogroup"] [role="radio"], [role="tablist"] [role="tab"]')]));
     }
     async closeSettings(save) {
         if (save) {
@@ -188,15 +189,27 @@ export class FlowPage {
             if (saveButton) {
                 await saveButton.locator.click().catch(() => undefined);
                 await sleep(400);
-                return;
             }
         }
-        const close = await resolveSelector(this.page, "closeButton", { last: true });
-        if (close)
-            await close.locator.click().catch(() => undefined);
-        else
+        // Popover panels close with Escape; never click arbitrary "close" icons (they may dismiss banners or dialogs).
+        for (let attempt = 0; attempt < 3 && (await this.settingsPanelOpen()); attempt += 1) {
             await pressEscape(this.page);
-        await sleep(250);
+            await sleep(250);
+        }
+    }
+    /** Current Flow panel has an Image/Video toggle; pick the requested media type first. */
+    async chooseMediaType(media) {
+        const radios = this.page.locator('[role="radiogroup"] [role="radio"], [role="tablist"] [role="tab"]');
+        const pattern = media === "video" ? /videocam|v[ií]deo/i : /image|imagem/i; // textContent joins icon + label ("imageImage"), so no \b
+        const target = await firstVisible([radios.filter({ hasText: pattern })]);
+        if (!target)
+            return "default";
+        const checked = (await target.getAttribute("aria-checked")) === "true" || (await target.getAttribute("aria-selected")) === "true";
+        if (!checked) {
+            await target.click();
+            await sleep(600);
+        }
+        return "ui";
     }
     /** Disables Flow Agent's per-generation credit confirmation (non-fatal if absent). */
     async ensureAutoApprove() {
@@ -375,6 +388,8 @@ export class FlowPage {
         const warnings = [];
         const opened = await this.openSettings();
         try {
+            if (opened)
+                applied.media_type = await this.chooseMediaType(input.media);
             if (input.model) {
                 if (await this.chooseModel(input.media, input.model))
                     applied.model = "ui";
@@ -779,6 +794,57 @@ export class FlowPage {
         const buffer = await readFile(file);
         const contentType = sniffContentType(buffer) ?? (type === "video" ? "video/mp4" : "image/png");
         return { buffer, contentType };
+    }
+    /** Model currently selected in Flow, read from the settings chip. */
+    async currentModelLabel() {
+        const chip = await resolveSelector(this.page, "settingsButton");
+        if (!chip)
+            return undefined;
+        const text = cleanLabel(await chip.locator.innerText().catch(() => ""))
+            .replace(/\bx[1-4]\b/gi, "")
+            .replace(/[^\p{L}\p{N}.\- ]/gu, "")
+            .replace(/\s+/g, " ")
+            .trim();
+        return /veo|banana|imagen|omni|gemini/i.test(text) ? text : undefined;
+    }
+    /** Small JPEG preview: images are downscaled in the page; videos use Flow's own tile thumbnail. */
+    async makeThumbnail(snapshot, type, buffer, contentType) {
+        try {
+            if (type === "image") {
+                const base64 = await this.page.evaluate(async ({ data, mime }) => {
+                    const binary = atob(data);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let index = 0; index < binary.length; index += 1)
+                        bytes[index] = binary.charCodeAt(index);
+                    const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }));
+                    const scale = Math.min(1, 640 / Math.max(bitmap.width, bitmap.height));
+                    const canvas = document.createElement("canvas");
+                    canvas.width = Math.round(bitmap.width * scale);
+                    canvas.height = Math.round(bitmap.height * scale);
+                    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                    return canvas.toDataURL("image/jpeg", 0.82).split(",")[1] ?? "";
+                }, { data: buffer.toString("base64"), mime: contentType });
+                return base64 ? Buffer.from(base64, "base64") : undefined;
+            }
+            const tile = mediaLocator(this.page, type).nth(snapshot.index);
+            const thumbSrc = await tile.evaluate((element) => {
+                const image = element instanceof HTMLImageElement ? element : element.querySelector("img");
+                return image?.currentSrc || image?.src || "";
+            }).catch(() => "");
+            if (thumbSrc && !thumbSrc.startsWith("blob:")) {
+                const response = await this.page.context().request.get(thumbSrc, { timeout: 20_000 });
+                const body = response.ok() ? await response.body() : undefined;
+                await response.dispose();
+                if (body?.length)
+                    return body;
+            }
+            await tile.scrollIntoViewIfNeeded().catch(() => undefined);
+            return await tile.screenshot({ type: "jpeg", quality: 80, timeout: 10_000 });
+        }
+        catch (error) {
+            log.debug("Thumbnail generation failed", error);
+            return undefined;
+        }
     }
     async screenshot(file) {
         try {

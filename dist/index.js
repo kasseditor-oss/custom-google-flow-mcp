@@ -15,7 +15,10 @@ import { updateManifest } from "./output/manifest.js";
 import { projectDirectory, resolveOutputRoot } from "./output/naming.js";
 import { JobQueue, isTerminal } from "./queue/job-queue.js";
 import { ASPECT_RATIOS, CAMERA_MOTIONS } from "./types.js";
-const VERSION = "1.1.0";
+import { UI_APP_ONLY_META, UI_MIME_TYPE, UI_RESOURCE_URI, UI_TOOL_META, brandIconDataUri, iconDataUri, jobPreview, openLocalFile, readThumbnail, viewerHtml } from "./ui.js";
+const VERSION = "1.2.0";
+/** Official Flow icon (cached locally after the first download; generic logo if offline). */
+const brandIcon = await brandIconDataUri();
 // ------------------------------------------------------------------ wiring
 const session = new BrowserSession();
 const generator = new FlowGenerator(session);
@@ -47,6 +50,21 @@ queue.onJobFinished = async (_job, batch) => {
         };
     });
 };
+/** Text JSON + structuredContent (for the widget) + inline thumbnails (for hosts without MCP Apps). */
+function jobResult(job, extra = {}) {
+    const view = { ...jobView(job), ...extra };
+    const images = [];
+    for (const file of (job.result?.files ?? []).slice(0, 4)) {
+        const data = readThumbnail(file.thumbnail);
+        if (data)
+            images.push({ type: "image", data, mimeType: "image/jpeg" });
+    }
+    return {
+        content: [{ type: "text", text: JSON.stringify(view, null, 2) }, ...images],
+        structuredContent: view,
+        ...(["failed", "cancelled", "interrupted"].includes(job.status) ? { isError: true } : {}),
+    };
+}
 function ok(value) {
     return { content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }] };
 }
@@ -113,6 +131,7 @@ function jobView(job, verbose = false) {
                 files: job.result.files.map((file) => file.path),
                 manifest: job.result.manifestPath,
                 flow_project_url: job.result.flowProjectUrl,
+                ...(job.result.modelUsed ? { model_used: job.result.modelUsed } : {}),
                 applied_via: job.result.applied,
                 warnings: job.result.warnings,
                 ...(verbose ? { final_prompt_sent: job.result.finalPrompt, file_details: job.result.files } : {}),
@@ -124,19 +143,34 @@ function jobView(job, verbose = false) {
         ...(verbose ? { events: job.events } : {}),
     };
 }
-async function enqueueAndMaybeWait(spec, wait, waitSeconds, maxRetries) {
+async function enqueueAndMaybeWait(spec, wait, waitSeconds, maxRetries, extra) {
     const job = queue.enqueue(spec, maxRetries !== undefined ? { maxRetries } : {});
     if (!wait) {
-        return ok({ ...jobView(job), message: "Queued in background. Poll flow_get_queue_status with job_id." });
+        return jobResult(job, { message: "Queued in background. The inline viewer updates live; or poll flow_get_queue_status with job_id." });
     }
-    const finished = await queue.waitFor(job.id, waitSeconds * 1_000);
-    const view = jobView(finished);
-    if (!isTerminal(finished.status)) {
-        return ok({ ...view, message: `Still ${finished.status} after ${waitSeconds}s. It continues in background; poll flow_get_queue_status with job_id '${job.id}'.` });
+    // MCP progress notifications (shown by clients that support them) while we wait.
+    const token = extra._meta?.progressToken;
+    let lastPhase = "";
+    let tick = 0;
+    const ticker = token === undefined ? undefined : setInterval(() => {
+        const message = job.phase ?? job.status;
+        if (message === lastPhase)
+            return;
+        lastPhase = message;
+        tick += 1;
+        extra.sendNotification({ method: "notifications/progress", params: { progressToken: token, progress: tick, message: `Google Flow: ${message}` } }).catch(() => undefined);
+    }, 1_500);
+    try {
+        const finished = await queue.waitFor(job.id, waitSeconds * 1_000);
+        if (!isTerminal(finished.status)) {
+            return jobResult(finished, { message: `Still ${finished.status} after ${waitSeconds}s. It continues in background; the viewer keeps updating, or poll flow_get_queue_status with job_id '${job.id}'.` });
+        }
+        return jobResult(finished);
     }
-    if (finished.status !== "completed")
-        return { ...ok(view), isError: true };
-    return ok(view);
+    finally {
+        if (ticker)
+            clearInterval(ticker);
+    }
 }
 // ------------------------------------------------------------------ schemas
 const zPrompt = z.string().min(3).max(5_000).describe("Prompt text (any language; English often gives the best Veo results).");
@@ -167,7 +201,14 @@ const namingShape = {
     overwrite: zOverwrite,
 };
 // ------------------------------------------------------------------- server
-const server = new McpServer({ name: "custom-google-flow-mcp", version: VERSION }, {
+const server = new McpServer({
+    name: "custom-google-flow-mcp",
+    title: "Google Flow",
+    version: VERSION,
+    ...(brandIcon
+        ? { icons: [{ src: brandIcon, mimeType: "image/png", sizes: ["192x192"] }] }
+        : iconDataUri() ? { icons: [{ src: iconDataUri(), mimeType: "image/svg+xml", sizes: ["any"] }] } : {}),
+}, {
     instructions: [
         "Automates Google Flow (flow.google.com, formerly labs.google/fx/tools/flow) in the user's own logged-in Chrome via CDP.",
         "Start with flow_check_session. If not ready, tell the user to run `npm run auth` in the custom-google-flow-mcp folder and sign in.",
@@ -222,10 +263,11 @@ server.registerTool("flow_generate_video", {
         wait_timeout_seconds: zWaitTimeout,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-}, async (input) => {
+    _meta: UI_TOOL_META,
+}, async (input, extra) => {
     try {
         const spec = buildSpec({ ...input, mediaType: "video" });
-        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries);
+        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {
         return failed(error);
@@ -251,13 +293,14 @@ server.registerTool("flow_image_to_video", {
         wait_timeout_seconds: zWaitTimeout,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-}, async (input) => {
+    _meta: UI_TOOL_META,
+}, async (input, extra) => {
     try {
         if (!input.start_frame && !input.end_frame && !input.reference_images?.length) {
             throw new FlowError("validation_error", "Provide at least one of start_frame, end_frame or reference_images.");
         }
         const spec = buildSpec({ ...input, mediaType: "video" });
-        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries);
+        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {
         return failed(error);
@@ -280,10 +323,11 @@ server.registerTool("flow_generate_image", {
         wait_timeout_seconds: zWaitTimeout,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
-}, async (input) => {
+    _meta: UI_TOOL_META,
+}, async (input, extra) => {
     try {
         const spec = buildSpec({ ...input, mediaType: "image" });
-        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries);
+        return await enqueueAndMaybeWait(spec, input.wait, input.wait_timeout_seconds, input.max_retries, extra);
     }
     catch (error) {
         return failed(error);
@@ -320,6 +364,7 @@ server.registerTool("flow_generate_batch", {
         overwrite: zOverwrite,
     },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+    _meta: UI_TOOL_META,
 }, async (input) => {
     try {
         const specs = input.scenes.map((scene, index) => {
@@ -365,12 +410,13 @@ server.registerTool("flow_generate_batch", {
                 failures: [],
             };
         });
-        return ok({
+        const summary = {
             ...queue.batchSummary(batch),
             job_ids: batch.jobIds,
             manifest: path.join(projectDir, "manifest.json"),
-            message: `Queued ${specs.length} takes. Poll flow_get_queue_status with batch_id '${batch.id}'.`,
-        });
+            message: `Queued ${specs.length} takes. The inline viewer shows live progress; or poll flow_get_queue_status with batch_id '${batch.id}'.`,
+        };
+        return { content: [{ type: "text", text: JSON.stringify(summary, null, 2) }], structuredContent: summary };
     }
     catch (error) {
         return failed(error);
@@ -430,11 +476,88 @@ server.registerTool("flow_cancel", {
         return failed(error);
     }
 });
+// ----------------------------------------------------------- MCP Apps (UI)
+server.registerResource("google-flow-viewer", UI_RESOURCE_URI, {
+    title: "Google Flow viewer",
+    description: "Inline widget: live generation progress and generated media previews.",
+    mimeType: UI_MIME_TYPE,
+}, async () => ({
+    contents: [{
+            uri: UI_RESOURCE_URI,
+            mimeType: UI_MIME_TYPE,
+            text: viewerHtml((await brandIconDataUri()) ?? brandIcon),
+            _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } },
+        }],
+}));
+server.registerTool("flow_preview", {
+    title: "Viewer: job/batch preview",
+    description: "Used by the inline Google Flow viewer to poll progress and fetch thumbnails. Not needed by the model; use flow_get_queue_status instead.",
+    inputSchema: {
+        job_id: z.string().optional(),
+        batch_id: z.string().optional(),
+        thumbnails_for: z.array(z.string()).optional().describe("Batch only: job ids whose thumbnails should be included."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: UI_APP_ONLY_META,
+}, async ({ job_id, batch_id, thumbnails_for }) => {
+    try {
+        if (batch_id) {
+            const batch = queue.getBatch(batch_id);
+            if (!batch)
+                throw new FlowError("validation_error", `Unknown batch_id ${batch_id}`);
+            const wanted = new Set(thumbnails_for ?? []);
+            const jobs = batch.jobIds.map((id) => queue.getJob(id)).filter((job) => Boolean(job));
+            const data = { kind: "batch", ...queue.batchSummary(batch), jobs: jobs.map((job) => jobPreview(job, wanted.has(job.id))) };
+            return { content: [{ type: "text", text: `${data.progress_percent}%` }], structuredContent: data };
+        }
+        if (!job_id)
+            throw new FlowError("validation_error", "job_id or batch_id is required.");
+        const job = queue.getJob(job_id);
+        if (!job)
+            throw new FlowError("validation_error", `Unknown job_id ${job_id}`);
+        const data = { kind: "job", done: isTerminal(job.status), jobs: [jobPreview(job, true)] };
+        return { content: [{ type: "text", text: job.status }], structuredContent: data };
+    }
+    catch (error) {
+        return failed(error);
+    }
+});
+server.registerTool("flow_open_file", {
+    title: "Viewer: open generated file",
+    description: "Used by the inline viewer's Open / Folder buttons. Opens a file generated by this server with the default app, or reveals it in the file manager.",
+    inputSchema: {
+        path: z.string(),
+        reveal: z.boolean().default(false),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    _meta: UI_APP_ONLY_META,
+}, async ({ path: file, reveal }) => {
+    try {
+        // Only files produced by this server can be opened.
+        const known = queue.listJobs().some((job) => job.result?.files.some((asset) => asset.path === file));
+        if (!known)
+            throw new FlowError("validation_error", "Only files generated by this MCP can be opened.");
+        openLocalFile(file, reveal);
+        return ok({ opened: file, reveal });
+    }
+    catch (error) {
+        return failed(error);
+    }
+});
 // -------------------------------------------------------------------- start
+let shuttingDown = false;
 function shutdown(reason) {
-    log.info(`Shutting down (${reason}). Chrome is left running to keep the session warm.`);
+    if (shuttingDown)
+        return;
+    shuttingDown = true;
+    log.info(`Shutting down (${reason}).`);
     queue.flush();
-    process.exit(0);
+    // Close the invisible browser this MCP launched; never a browser the user opened.
+    const force = setTimeout(() => process.exit(0), 4_000);
+    session.closeLaunched("shutdown").finally(() => {
+        clearTimeout(force);
+        process.exit(0);
+    });
 }
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));

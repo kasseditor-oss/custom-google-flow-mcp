@@ -35,11 +35,16 @@ export interface HealthReport extends SessionReport {
 const HOME_KEYS: SelectorKey[] = ["newProjectButton", "projectLink", "accountAvatar", "signInButton"];
 
 async function withPage<T>(session: BrowserSession, useTemporaryTab: boolean, fn: (page: Page) => Promise<T>): Promise<T> {
-  const page = useTemporaryTab ? await session.newPage() : await session.primaryPage();
+  session.hold();
   try {
-    return await fn(page);
+    const page = useTemporaryTab ? await session.newPage() : await session.primaryPage();
+    try {
+      return await fn(page);
+    } finally {
+      if (useTemporaryTab) await page.close().catch(() => undefined);
+    }
   } finally {
-    if (useTemporaryTab) await page.close().catch(() => undefined);
+    session.release();
   }
 }
 

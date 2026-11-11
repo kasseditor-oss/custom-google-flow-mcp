@@ -16,6 +16,8 @@ const EXPECTED = [
     "flow_generate_batch",
     "flow_get_queue_status",
     "flow_cancel",
+    "flow_preview",
+    "flow_open_file",
 ];
 const transport = new StdioClientTransport({
     command: process.execPath,

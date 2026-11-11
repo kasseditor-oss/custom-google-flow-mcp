@@ -9,13 +9,19 @@ import { isFlowUrl } from "./flow/urls.js";
 import { HEALTH_CHECK_KEYS } from "./selectors.js";
 const HOME_KEYS = ["newProjectButton", "projectLink", "accountAvatar", "signInButton"];
 async function withPage(session, useTemporaryTab, fn) {
-    const page = useTemporaryTab ? await session.newPage() : await session.primaryPage();
+    session.hold();
     try {
-        return await fn(page);
+        const page = useTemporaryTab ? await session.newPage() : await session.primaryPage();
+        try {
+            return await fn(page);
+        }
+        finally {
+            if (useTemporaryTab)
+                await page.close().catch(() => undefined);
+        }
     }
     finally {
-        if (useTemporaryTab)
-            await page.close().catch(() => undefined);
+        session.release();
     }
 }
 function nextStep(access) {

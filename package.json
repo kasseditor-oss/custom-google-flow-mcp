@@ -1,6 +1,6 @@
 {
   "name": "custom-google-flow-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "MCP server for Google Flow (labs.google) with CDP auth, batch storyboard queue, editor-friendly naming, manifests, ingredients, camera controls and self-healing selectors.",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/build-ui.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/bin.js",
     "auth": "node dist/bin.js auth",
@@ -27,6 +27,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
     "@types/node": "^26.6.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
@@ -49,6 +50,7 @@
   "files": [
     "dist",
     "scripts",
+    "ui",
     "README.md",
     "LICENSE",
     ".env.example"

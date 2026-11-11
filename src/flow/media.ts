@@ -56,15 +56,23 @@ export async function mediaSnapshots(page: Page, type: MediaKind): Promise<Media
       }
     };
 
-    if (element instanceof HTMLVideoElement) {
-      addUrl(element.currentSrc);
-      addUrl(element.getAttribute("src"));
-      addUrl(element.poster);
-      element.querySelectorAll("source").forEach((source) => addUrl(source.src || source.getAttribute("src")));
-    } else if (element instanceof HTMLImageElement) {
-      addUrl(element.currentSrc);
-      addUrl(element.getAttribute("src"));
+    // Tiles (e.g. <flow-video-tile>) wrap a thumbnail <img> and sometimes a <video>.
+    const video = element instanceof HTMLVideoElement ? element : element.querySelector("video");
+    const image = element instanceof HTMLImageElement ? element : element.querySelector("img");
+    if (video) {
+      addUrl(video.currentSrc);
+      addUrl(video.getAttribute("src"));
+      addUrl(video.poster);
+      video.querySelectorAll("source").forEach((source) => addUrl(source.src || source.getAttribute("src")));
     }
+    const videoUrl = sourceUrl;
+    if (image) {
+      addUrl(image.currentSrc);
+      addUrl(image.getAttribute("src"));
+    }
+    // For video tiles without a <video> yet, the thumbnail is identity only, not the download source.
+    if (!(element instanceof HTMLImageElement) && !video && image) sourceUrl = undefined;
+    if (video && videoUrl) sourceUrl = videoUrl;
 
     let current: Element | null = element;
     for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
@@ -80,9 +88,10 @@ export async function mediaSnapshots(page: Page, type: MediaKind): Promise<Media
       keys.push(html.dataset.flowMcpAssetKey);
     }
 
-    const ready = element instanceof HTMLVideoElement
-      ? element.readyState >= 1 && Number.isFinite(element.duration) && element.duration > 0
-      : element instanceof HTMLImageElement && element.complete && element.naturalWidth >= 256;
+    const busy = /\b\d{1,3}\s?%|generating|gerando/i.test((element as HTMLElement).innerText || "");
+    const ready = !busy && (video
+      ? (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) || Boolean(image && image.complete && image.naturalWidth >= 128)
+      : Boolean(image && image.complete && image.naturalWidth >= 256));
     const unique = Array.from(new Set(keys));
     return sourceUrl ? { index, keys: unique, ready, sourceUrl } : { index, keys: unique, ready };
   }));

@@ -7,8 +7,10 @@
  * sign-in / 2FA works and the session persists inside the dedicated profile.
  */
 import { chromium } from "playwright-core";
-import { isCdpReachable, launchChrome, waitForCdp } from "../browser/chrome.js";
+import { closeBrowserAt, isCdpReachable, launchChrome, waitForCdp } from "../browser/chrome.js";
+import { rmSync } from "node:fs";
 import { config } from "../config.js";
+import { ownerMarker } from "../browser/session.js";
 import { FlowPage } from "../flow/flow-page.js";
 import { isFlowUrl } from "../flow/urls.js";
 const noWait = process.argv.includes("--no-wait");
@@ -17,13 +19,14 @@ async function main() {
     say(`Profile : ${config.userDataDir}`);
     say(`CDP     : ${config.cdpUrl}`);
     if (await isCdpReachable(config.cdpUrl)) {
-        say("Chrome with remote debugging is already running. Reusing it.");
+        // It may be the MCP's invisible (headless) instance; restart it with a window.
+        say("Closing the running background browser so it can reopen with a window...");
+        await closeBrowserAt(config.cdpUrl);
     }
-    else {
-        launchChrome({ url: config.flowUrl, headless: false });
-        await waitForCdp(config.cdpUrl);
-        say("Chrome started.");
-    }
+    rmSync(ownerMarker(), { force: true });
+    launchChrome({ url: config.flowUrl, headless: false });
+    await waitForCdp(config.cdpUrl);
+    say("Browser started.");
     if (noWait) {
         say("Done. Leave this Chrome window open (you can minimize it).");
         return;
@@ -56,8 +59,9 @@ async function main() {
             if (state?.workspaceAvailable) {
                 say("");
                 say("OK! Google Flow session is ready and saved in the dedicated profile.");
-                say("Keep this Chrome running (minimize it). The MCP attaches to it via CDP;");
-                say("if it is closed, the MCP relaunches it automatically with the same profile.");
+                say("Closing this window. From now on the MCP opens the browser invisibly when");
+                say("it needs Google Flow and closes it again when idle.");
+                await closeBrowserAt(config.cdpUrl);
                 process.exit(0);
             }
         }

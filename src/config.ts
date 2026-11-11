@@ -34,7 +34,10 @@ export const config = {
   cdpPort: Number.parseInt(new URL(cdpUrl).port || "9222", 10),
   userDataDir: process.env.FLOW_MCP_USER_DATA_DIR ?? path.join(dataDir, "chrome-profile"),
   browserExecutable: process.env.FLOW_MCP_BROWSER_EXECUTABLE,
-  headless: process.env.FLOW_MCP_HEADLESS === "1",
+  /** Invisible browser by default (no window, no taskbar). FLOW_MCP_HEADLESS=0 shows it. */
+  headless: process.env.FLOW_MCP_HEADLESS !== "0",
+  /** Close the browser the MCP launched after this many idle seconds (0 = keep open). */
+  idleCloseSeconds: intEnv("FLOW_MCP_IDLE_CLOSE_SECONDS", 90, 0, 86_400),
   dataDir,
   logDir: process.env.FLOW_MCP_LOG_DIR ?? path.join(PROJECT_ROOT, "logs"),
   outputRoot: process.env.FLOW_MCP_OUTPUT_ROOT ?? (process.platform === "win32" ? "C:/Projetos" : path.join(os.homedir(), "Projetos")),

@@ -76,6 +76,7 @@ const def = (key, description, critical, strategies) => ({
 });
 export const SELECTORS = {
     promptInput: def("promptInput", "Prompt editor", true, [
+        { label: "role=textbox aria create", locate: (p) => p.locator('[role="textbox"][aria-label*="create" i], [role="textbox"][aria-label*="criar" i], [role="textbox"][aria-label*="crie" i]') },
         { label: "textarea[placeholder]", locate: (p) => p.locator('textarea[placeholder*="prompt" i], textarea[placeholder*="descrev" i], textarea[placeholder*="describe" i], textarea[placeholder*="crie" i], textarea[placeholder*="create" i]') },
         { label: "contenteditable textbox", locate: (p) => p.locator('[contenteditable="true"][role="textbox"], [contenteditable="true"][data-placeholder]') },
         { label: "role=textbox", locate: (p) => p.getByRole("textbox") },
@@ -83,12 +84,15 @@ export const SELECTORS = {
         { label: "any contenteditable", locate: (p) => p.locator('[contenteditable="true"]') },
     ]),
     generateButton: def("generateButton", "Submit / Generate button", true, [
+        { label: "aria Start generation", locate: (p) => p.locator('button[aria-label="Start generation" i], button[aria-label*="Iniciar gera" i], button[aria-label*="Gerar" i][type="submit"]') },
         { label: "icon arrow_forward/send", locate: (p) => withIcon(p, /^(?:arrow_forward|send|arrow_upward|north)$/, "button") },
         { label: "aria-label generate", locate: (p) => ariaContains(p, "button", TEXT.generate) },
         { label: "role button exact text", locate: (p) => p.getByRole("button", { name: anyText(TEXT.generate, true) }) },
         { label: "submit button", locate: (p) => p.locator('button[type="submit"]') },
     ]),
-    settingsButton: def("settingsButton", "Generation settings (tune) button", false, [
+    settingsButton: def("settingsButton", "Generation settings trigger (model / ratio / outputs chip)", false, [
+        { label: "aria Settings trigger", locate: (p) => p.locator('button[aria-label="Settings trigger" i], button[aria-label*="configurações de gera" i]') },
+        { label: "chip with crop icon", locate: (p) => withIcon(p, /^crop_(?:16_9|9_16|square|landscape|portrait)$/, "button") },
         { label: "icon tune/settings", locate: (p) => withIcon(p, /^(?:tune|settings_2|settings|page_info)$/, "button") },
         { label: "aria-label settings", locate: (p) => ariaContains(p, "button", TEXT.settings) },
         { label: "role button settings", locate: (p) => p.getByRole("button", { name: anyText(TEXT.settings) }) },
@@ -104,6 +108,7 @@ export const SELECTORS = {
         { label: "data-project-id", locate: (p) => p.locator("[data-project-id]") },
     ]),
     addMediaButton: def("addMediaButton", "Add media / ingredient button", false, [
+        { label: "aria Add ingredients", locate: (p) => p.locator('button[aria-label*="Add ingredients" i], button[aria-label*="Adicionar ingrediente" i]') },
         { label: "icon add_photo/image", locate: (p) => withIcon(p, /^(?:add_photo_alternate|add_a_photo|image|photo_library|add_circle|add|attach_file|upload)$/, "button") },
         { label: "aria-label add media", locate: (p) => ariaContains(p, "button", TEXT.addMedia) },
         { label: "role button add media", locate: (p) => p.getByRole("button", { name: anyText(TEXT.addMedia) }) },
@@ -154,10 +159,19 @@ export const SELECTORS = {
         { label: "avatar image", locate: (p) => p.locator('img[src*="googleusercontent.com/a/"], img[alt*="profile" i], img[alt*="perfil" i]') },
     ]),
     generatedVideo: def("generatedVideo", "Generated video elements", false, [
-        { label: "video", locate: (p) => p.locator("video") },
+        { label: "flow-video-tile / video", locate: (p) => p.locator("flow-video-tile, video:not(flow-video-tile video)") },
     ]),
     generatedImage: def("generatedImage", "Generated image elements", false, [
-        { label: "img blob/googleusercontent", locate: (p) => p.locator('img[src^="blob:"], img[src*="googleusercontent"], img[src*="ggpht"], img[src*="storage.googleapis"]') },
+        {
+            label: "img /asb/ | blob | googleusercontent (excluding video thumbnails and avatars)",
+            locate: (p) => p.locator([
+                "flow-image-tile img",
+                'img[src*="flow-content.google/image"]:not(flow-image-tile img)',
+                'img[src*="/asb/"]:not([alt*="video" i]):not(flow-video-tile img):not(flow-image-tile img)',
+                'img[src^="blob:"]:not([alt*="video" i]):not(flow-video-tile img)',
+                'img[src*="storage.googleapis"]:not(flow-video-tile img)',
+            ].join(", ")),
+        },
     ]),
     downloadMenuItem: def("downloadMenuItem", "Download menu item in asset menu", false, [
         { label: "icon download", locate: (p) => withIcon(p, /^(?:download|file_download)$/, "[role='menuitem'], button") },

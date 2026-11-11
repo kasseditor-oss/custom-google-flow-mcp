@@ -85,6 +85,33 @@ export async function waitForCdp(cdpUrl, timeoutMs = 30_000) {
  * Note: Chrome 136+ refuses --remote-debugging-port on the *default* profile,
  * which is why a dedicated user-data-dir is required.
  */
+/** Asks the browser on `cdpUrl` to quit (Browser.close) and waits until the port is free. */
+export async function closeBrowserAt(cdpUrl, timeoutMs = 10_000) {
+    try {
+        const { chromium } = await import("playwright-core");
+        const browser = await chromium.connectOverCDP(cdpUrl, { timeout: 5_000 });
+        const session = await browser.newBrowserCDPSession();
+        await session.send("Browser.close").catch(() => undefined);
+    }
+    catch {
+        // Already gone.
+    }
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline && (await isCdpReachable(cdpUrl, 500))) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+}
+/** Reads the browser's real User-Agent from /json/version. */
+export async function cdpUserAgent(cdpUrl) {
+    try {
+        const response = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(2_000) });
+        const data = (await response.json());
+        return data["User-Agent"];
+    }
+    catch {
+        return undefined;
+    }
+}
 export function launchChrome(options) {
     const executable = findChromeExecutable();
     mkdirSync(config.userDataDir, { recursive: true });
@@ -99,14 +126,15 @@ export function launchChrome(options) {
         "--disable-renderer-backgrounding",
         "--disable-backgrounding-occluded-windows",
         "--lang=pt-BR",
-        ...(options.headless ? ["--headless=new", "--window-size=1600,1000"] : ["--window-size=1600,1000"]),
+        ...(options.headless ? ["--headless=new", "--window-size=1600,1000", "--mute-audio"] : ["--window-size=1600,1000"]),
+        ...(options.userAgent ? [`--user-agent=${options.userAgent}`] : []),
         options.url,
     ];
     log.info(`Launching Chrome: ${executable} (profile ${config.userDataDir}, CDP port ${config.cdpPort})`);
     const child = spawn(executable, args, {
         detached: options.detached ?? true,
         stdio: "ignore",
-        windowsHide: false,
+        windowsHide: Boolean(options.headless),
     });
     child.on("error", (error) => log.error("Chrome process error", error));
     child.unref();

@@ -54,6 +54,25 @@ npx -y github:kasseditor-oss/custom-google-flow-mcp auth
 Cole no Claude Code: *"Instale o MCP https://github.com/kasseditor-oss/custom-google-flow-mcp rodando
 `npx -y github:kasseditor-oss/custom-google-flow-mcp install` e depois rode o comando `auth` dele."*
 
+## Visual no chat (MCP Apps)
+
+As tools de geração abrem um **widget dentro do chat** (padrão oficial MCP Apps, o mesmo usado por conectores
+como o Higgsfield): logo animado com "Gerando no Google Flow…", fase e tempo; ao terminar, a imagem / capa do vídeo
+grande com modelo · proporção · prompt sobrepostos e botões **Abrir** e **Mostrar na pasta**. Lotes mostram uma grade
+com o progresso de cada take.
+
+* Funciona no **Claude Desktop** (servidor local) e em outros hosts com MCP Apps (ex.: VS Code).
+* Hosts sem MCP Apps (ex.: Claude Code no terminal) recebem a miniatura como imagem na resposta da tool.
+* O ícone oficial do Google Flow é baixado do servidor público do Google (`gstatic.com`) na sua máquina e guardado em cache
+  (`%LOCALAPPDATA%\custom-google-flow-mcp\brand`); ele não é distribuído neste repositório. Sem internet, usa um logo genérico.
+
+## Navegador invisível
+
+Depois do `auth`, o MCP usa o perfil logado em **modo headless**: nenhuma janela ou ícone aparece. O navegador abre só
+quando há trabalho e fecha sozinho após `FLOW_MCP_IDLE_CLOSE_SECONDS` (padrão 90 s) sem uso, e também quando o MCP
+encerra. Um navegador que *você* abriu (ex.: o do `auth`) nunca é fechado pelo MCP. Para ver o que ele faz:
+`FLOW_MCP_HEADLESS=0`.
+
 ## Tools
 
 | Tool | O que faz |
@@ -66,6 +85,7 @@ Cole no Claude Code: *"Instale o MCP https://github.com/kasseditor-oss/custom-go
 | `flow_generate_batch` | Storyboard inteiro em background: concorrência 1–4, retry com backoff exponencial, manifesto. |
 | `flow_get_queue_status` | Progresso de lote/job sem bloquear. |
 | `flow_cancel` | Cancela job ou lote. |
+| `flow_preview`, `flow_open_file` | Usadas só pelo widget do chat (ocultas do modelo). |
 
 As tools de geração aceitam `wait` (padrão `true`, até `wait_timeout_seconds`) — se o vídeo demorar mais, retornam `job_id` e o job continua em background.
 
@@ -85,7 +105,7 @@ As tools de geração aceitam `wait` (padrão `true`, até `wait_timeout_seconds
 
 ## Autenticação (CDP híbrido)
 
-* `npm run auth` — abre um Chrome **real** (não build de automação) com perfil dedicado
+* `npm run auth` — abre (visível, só para o login) um Chrome **real** (não build de automação) com perfil dedicado
   (`%LOCALAPPDATA%\custom-google-flow-mcp\chrome-profile`) e `--remote-debugging-port=9222`. Você faz login uma vez; a sessão fica no perfil, sem 2FA repetido.
 * O MCP (`FLOW_MCP_BROWSER_MODE=auto`) anexa a esse Chrome via `connectOverCDP`. Se estiver fechado, relança com o mesmo perfil.
 * `cdp` = só anexa (use se você mesmo abre o navegador com `--remote-debugging-port=9222 --user-data-dir=...`). Chrome 136+ não aceita a porta de debug no perfil padrão — por isso o perfil dedicado.

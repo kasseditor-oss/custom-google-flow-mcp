@@ -36,6 +36,7 @@ export class FlowGenerator {
     }
     async run(job, context) {
         const slot = this.acquire();
+        this.session.hold();
         try {
             return await this.execute(job, slot, context);
         }
@@ -54,6 +55,7 @@ export class FlowGenerator {
         }
         finally {
             slot.busy = false;
+            this.session.release();
         }
     }
     async flowFor(slot) {
@@ -80,6 +82,7 @@ export class FlowGenerator {
         let applied;
         let warnings;
         let projectUrl;
+        let modelUsed = pending?.modelUsed;
         if (pending) {
             // Resume: credits were already spent on a previous attempt.
             context.setPhase("resuming previous submission");
@@ -165,6 +168,7 @@ export class FlowGenerator {
             const noun = spec.mediaType === "video" ? (spec.outputsCount === 1 ? "video" : "videos") : spec.outputsCount === 1 ? "image" : "images";
             const prefix = agentUi || applied.outputs_count !== "ui" ? `Create exactly ${spec.outputsCount === 1 ? "one" : spec.outputsCount} ${noun}: ` : "";
             finalPrompt = `${prefix}${spec.prompt.trim()}${directives.length ? `\n\n${directives.join(" ")}` : ""}`;
+            modelUsed = await flow.currentModelLabel().catch(() => undefined);
             context.setPhase("submitting");
             await flow.fillPrompt(finalPrompt);
             const submitContext = await flow.prepareSubmit(spec.mediaType, finalPrompt);
@@ -177,6 +181,7 @@ export class FlowGenerator {
                 finalPrompt,
                 applied,
                 warnings,
+                ...(modelUsed ? { modelUsed } : {}),
             };
             this.pending.set(job.id, record);
             context.setPhase("generating");
@@ -202,7 +207,7 @@ export class FlowGenerator {
         const files = await this.save(flow, job, ready);
         const manifestPath = await this.writeManifest(job, files, finalPrompt, projectUrl, applied);
         this.pending.delete(job.id);
-        return { files, manifestPath, finalPrompt, flowProjectUrl: projectUrl, applied, warnings };
+        return { files, manifestPath, finalPrompt, flowProjectUrl: projectUrl, ...(modelUsed ? { modelUsed } : {}), applied, warnings };
     }
     /** After a reload, finds the same assets again by identity keys. */
     async relocate(flow, spec, previous) {
@@ -244,7 +249,15 @@ export class FlowGenerator {
             });
             await writeFile(file, buffer);
             const probe = await probeMedia(file);
-            saved.push({ path: file, variation: index + 1, contentType, sizeBytes: buffer.length, sha256: sha256(buffer), probe });
+            const asset = { path: file, variation: index + 1, contentType, sizeBytes: buffer.length, sha256: sha256(buffer), probe };
+            const thumb = await flow.makeThumbnail(media[index], spec.mediaType, buffer, contentType);
+            if (thumb) {
+                const thumbDir = path.join(config.dataDir, "thumbs");
+                await mkdir(thumbDir, { recursive: true });
+                asset.thumbnail = path.join(thumbDir, `${job.id}_${index + 1}.jpg`);
+                await writeFile(asset.thumbnail, thumb);
+            }
+            saved.push(asset);
             log.info(`Saved ${file} (${(buffer.length / 1_048_576).toFixed(1)} MB)`);
         }
         return saved;

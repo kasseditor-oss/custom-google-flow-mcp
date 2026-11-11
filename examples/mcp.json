@@ -2,7 +2,7 @@
   "mcpServers": {
     "google-flow": {
       "command": "node",
-      "args": ["C:\caminho\para\custom-google-flow-mcp\dist\index.js"],
+      "args": ["C:\caminho\para\custom-google-flow-mcp\dist\bin.js"],
       "env": {
         "FLOW_MCP_BROWSER_MODE": "auto",
         "FLOW_MCP_CDP_URL": "http://127.0.0.1:9222",

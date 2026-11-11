@@ -1,11 +1,11 @@
 {
   "name": "custom-google-flow-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for Google Flow (labs.google) with CDP auth, batch storyboard queue, editor-friendly naming, manifests, ingredients, camera controls and self-healing selectors.",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "custom-google-flow-mcp": "dist/index.js"
+    "custom-google-flow-mcp": "dist/bin.js"
   },
   "engines": {
     "node": ">=20"
@@ -14,11 +14,11 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "start": "node dist/index.js",
-    "auth": "tsc -p tsconfig.json && node dist/cli/auth.js",
-    "chrome": "tsc -p tsconfig.json && node dist/cli/auth.js --no-wait",
+    "start": "node dist/bin.js",
+    "auth": "node dist/bin.js auth",
+    "chrome": "node dist/bin.js chrome",
     "smoke": "node dist/cli/smoke.js",
-    "prepare": "npm run build"
+    "setup": "node dist/bin.js install"
   },
   "license": "MIT",
   "dependencies": {
@@ -45,5 +45,12 @@
     "cdp",
     "video-generation"
   ],
-  "author": "Kassdev"
+  "author": "Kassdev",
+  "files": [
+    "dist",
+    "scripts",
+    "README.md",
+    "LICENSE",
+    ".env.example"
+  ]
 }

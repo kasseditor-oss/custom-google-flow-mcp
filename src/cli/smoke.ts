@@ -21,7 +21,7 @@ const EXPECTED = [
 
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [path.join(PROJECT_ROOT, "dist", "index.js")],
+  args: [path.join(PROJECT_ROOT, "dist", "bin.js")],
   stderr: "pipe",
 });
 const client = new Client({ name: "smoke", version: "1.0.0" });

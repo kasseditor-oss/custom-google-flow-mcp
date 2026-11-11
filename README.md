@@ -4,6 +4,56 @@ Servidor MCP (stdio, TypeScript) que automatiza o **Google Flow** (`flow.google.
 no seu próprio navegador logado, via Chrome DevTools Protocol. Baseado na arquitetura de
 [retrolyze52/google-flow-mcp](https://github.com/retrolyze52/google-flow-mcp), reescrito em módulos.
 
+## Instalação
+
+Requisitos: **Node.js 20+** e um navegador Chromium (Chrome, Brave, Edge ou Chromium).
+
+### Opção 1 — Plugin do Claude Code (mais fácil)
+
+Dentro do Claude Code:
+
+```
+/plugin marketplace add kasseditor-oss/custom-google-flow-mcp
+/plugin install google-flow@kasseditor-oss
+```
+
+Na primeira execução o plugin instala as dependências sozinho (~5 s). Depois faça o login uma vez (veja "Primeiro login").
+
+### Opção 2 — Um comando (Claude Code + Claude Desktop)
+
+```
+npx -y github:kasseditor-oss/custom-google-flow-mcp install
+```
+
+Instala uma cópia permanente em `%LOCALAPPDATA%\custom-google-flow-mcppp`, registra o servidor `google-flow`
+no Claude Code (escopo usuário) e no `claude_desktop_config.json` do Claude Desktop (com backup `.bak`).
+Opções: `--output-root D:/Videos`, `--concurrency 2`, `--name meu-flow`, `--only code|desktop`.
+
+### Opção 3 — Clonar
+
+```
+git clone https://github.com/kasseditor-oss/custom-google-flow-mcp.git
+cd custom-google-flow-mcp
+npm install --omit=dev
+npm run setup        # mesmo registro automático da opção 2
+```
+
+`dist/` já vem compilado no repositório; não precisa de build.
+
+### Primeiro login
+
+```
+npx -y github:kasseditor-oss/custom-google-flow-mcp auth
+```
+
+(ou `npm run auth` na pasta clonada). Abre o navegador com perfil dedicado; entre na conta Google e clique em
+"Crie com o Google Flow". Depois, no Claude, peça `flow_check_session`.
+
+### Pedir para o Claude instalar
+
+Cole no Claude Code: *"Instale o MCP https://github.com/kasseditor-oss/custom-google-flow-mcp rodando
+`npx -y github:kasseditor-oss/custom-google-flow-mcp install` e depois rode o comando `auth` dele."*
+
 ## Tools
 
 | Tool | O que faz |
@@ -50,16 +100,16 @@ As tools de geração aceitam `wait` (padrão `true`, até `wait_timeout_seconds
 * Concorrência > 1: cada worker usa aba e projeto Flow próprios (galerias não se misturam).
 * Falhas salvam screenshot em `logs/job-<id>-attempt<n>.png`.
 
-## Scripts
+## Comandos
 
 ```
-git clone https://github.com/kasseditor-oss/custom-google-flow-mcp.git
-cd custom-google-flow-mcp
-npm install       # já compila (script prepare)
-npm run auth      # login inicial
-npm run chrome    # só sobe o Chrome com CDP
-npm run smoke     # teste de protocolo MCP (sem navegador, sem créditos)
+custom-google-flow-mcp            # servidor MCP (stdio)
+custom-google-flow-mcp install    # registra no Claude Code / Desktop
+custom-google-flow-mcp auth       # login inicial
+custom-google-flow-mcp chrome     # só sobe o navegador com CDP
 ```
+
+Na pasta clonada: `npm run setup | auth | chrome | smoke`. Desenvolvimento: `npm install && npm run build` (commite o `dist/`).
 
 Variáveis: veja `.env.example`. Exemplos de config e storyboard em `examples/`.
 

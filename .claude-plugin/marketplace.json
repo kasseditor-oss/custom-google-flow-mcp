@@ -1,0 +1,12 @@
+{
+  "name": "kasseditor-oss",
+  "owner": { "name": "Kassdev", "url": "https://github.com/kasseditor-oss" },
+  "metadata": { "description": "Ferramentas de Kassdev para Claude Code." },
+  "plugins": [
+    {
+      "name": "google-flow",
+      "source": "./",
+      "description": "Automação do Google Flow (Veo / Nano Banana) via MCP: vídeo, imagem, storyboard em lote, nomes prontos para edição e manifest.json."
+    }
+  ]
+}

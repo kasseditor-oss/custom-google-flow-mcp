@@ -16,7 +16,7 @@ import { projectDirectory, resolveOutputRoot } from "./output/naming.js";
 import { JobQueue, isTerminal } from "./queue/job-queue.js";
 import { ASPECT_RATIOS, CAMERA_MOTIONS, type CameraMotion, type GenerationSpec, type JobRecord, type MediaKind } from "./types.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 // ------------------------------------------------------------------ wiring
 

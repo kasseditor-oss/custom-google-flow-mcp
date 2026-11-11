@@ -1,0 +1,16 @@
+{
+  "name": "google-flow",
+  "version": "1.1.0",
+  "description": "Google Flow (Veo / Nano Banana) automation: text/image-to-video, images, batch storyboard queue, editor-ready file naming and manifest.json.",
+  "author": { "name": "Kassdev", "url": "https://github.com/kasseditor-oss" },
+  "homepage": "https://github.com/kasseditor-oss/custom-google-flow-mcp",
+  "repository": "https://github.com/kasseditor-oss/custom-google-flow-mcp",
+  "license": "MIT",
+  "keywords": ["google-flow", "veo", "video-generation", "mcp"],
+  "mcpServers": {
+    "google-flow": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/launch.mjs"]
+    }
+  }
+}

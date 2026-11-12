@@ -65,6 +65,8 @@ export interface SavedAsset {
   probe?: MediaProbe;
   /** Small JPEG preview (local path) used by the chat widget and inline image results. */
   thumbnail?: string;
+  /** ~320px variant used when several previews travel in one tool result. */
+  thumbnailSmall?: string;
 }
 
 export interface GenerationResult {

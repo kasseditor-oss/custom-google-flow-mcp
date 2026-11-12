@@ -967,6 +967,29 @@ export class FlowPage {
             .trim();
         return /veo|banana|imagen|omni|gemini/i.test(text) ? text : undefined;
     }
+    /** Downscales any image buffer to a JPEG whose longest side is `maxSide` (done in the page's canvas). */
+    async downscaleJpeg(buffer, contentType, maxSide, quality = 0.78) {
+        try {
+            const base64 = await this.page.evaluate(async ({ data, mime, side, q }) => {
+                const binary = atob(data);
+                const bytes = new Uint8Array(binary.length);
+                for (let index = 0; index < binary.length; index += 1)
+                    bytes[index] = binary.charCodeAt(index);
+                const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }));
+                const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+                const canvas = document.createElement("canvas");
+                canvas.width = Math.round(bitmap.width * scale);
+                canvas.height = Math.round(bitmap.height * scale);
+                canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                return canvas.toDataURL("image/jpeg", q).split(",")[1] ?? "";
+            }, { data: buffer.toString("base64"), mime: contentType, side: maxSide, q: quality });
+            return base64 ? Buffer.from(base64, "base64") : undefined;
+        }
+        catch (error) {
+            log.debug("Downscale failed", error);
+            return undefined;
+        }
+    }
     /** Small JPEG preview: images are downscaled in the page; videos use Flow's own tile thumbnail. */
     async makeThumbnail(snapshot, type, buffer, contentType) {
         try {

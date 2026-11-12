@@ -15,8 +15,8 @@
   }
   :root[data-theme="dark"] { --card: #1f2024; --line: #2d2f36; --text: #eef0f5; --muted: #9aa1b2; --btn: #2b2d34; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--text); }
-  body { padding: 4px 2px 6px; font-size: 14px; line-height: 1.4; }
+  html, body { margin: 0; background: transparent; color: var(--text); overflow: hidden; }
+  body { padding: 0 0 4px; font-size: 14px; line-height: 1.4; }
 
   .card { position: relative; border-radius: var(--radius); overflow: hidden; background: var(--card); border: 1px solid var(--line); }
   .frame { position: relative; display: flex; justify-content: center; background: #0d0e11; }
@@ -214,6 +214,10 @@ async function poll() {
     const pendingThumbs = state.batchId && [...state.thumbs.values()].some((v) => v === null);
     if (!data.done || pendingThumbs) state.timer = setTimeout(poll, data.done ? 300 : POLL_MS);
   } catch (error) {
+    // Some hosts do not let the widget call the server; keep the pending view honest.
+    state.pollFailures = (state.pollFailures || 0) + 1;
+    const phase = document.querySelector(".stage .phase");
+    if (phase && state.pollFailures >= 2) phase.dataset.phase = "Gerando em segundo plano — o resultado aparece na resposta do Claude";
     state.timer = setTimeout(poll, POLL_MS * 2);
   }
 }
@@ -229,6 +233,15 @@ function handleResult(result) {
   }
   if (data.batch_id && !data.job_id) state.batchId = data.batch_id;
   else if (data.job_id) state.jobId = data.job_id;
+  // The result already carries the finished preview (thumbnails included): render it directly.
+  if (data.preview && ["completed", "failed", "cancelled", "interrupted"].includes(data.preview.status)) {
+    renderJob(data.preview);
+    return;
+  }
+  if (["failed", "cancelled", "interrupted"].includes(data.status)) {
+    renderJob({ ...data, files: [] });
+    return;
+  }
   poll();
 }
 
@@ -243,8 +256,35 @@ document.addEventListener("click", async (event) => {
   if (!target) return;
   const reveal = target.hasAttribute("data-reveal");
   const path = target.getAttribute(reveal ? "data-reveal" : "data-open");
-  await app.callServerTool({ name: "flow_open_file", arguments: { path, reveal } }).catch(() => undefined);
+  // 1) ask the MCP server to open it; 2) ask the host to open a file:// link; 3) copy the path.
+  try {
+    const res = await app.callServerTool({ name: "flow_open_file", arguments: { path, reveal } });
+    if (!res?.isError) return toast(reveal ? "Abrindo a pasta…" : "Abrindo o arquivo…");
+  } catch { /* host may not allow widget -> server calls */ }
+  try {
+    const target = reveal ? path.replace(/[\\/][^\\/]+$/, "") : path;
+    const url = "file:///" + target.split("\\").join("/");
+    const res = await app.openLink({ url });
+    if (!res?.isError) return;
+  } catch { /* not supported */ }
+  try {
+    await navigator.clipboard.writeText(path);
+    toast("Caminho copiado: " + path);
+  } catch {
+    toast(path);
+  }
 });
+
+function toast(text) {
+  let el = document.getElementById("toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.style.cssText = "margin-top:8px;font-size:12px;color:var(--muted);word-break:break-all";
+    document.getElementById("main").appendChild(el);
+  }
+  el.textContent = text;
+}
 
 app.ontoolinput = (params) => {
   state.input = params?.arguments || {};

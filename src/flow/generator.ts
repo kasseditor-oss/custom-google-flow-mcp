@@ -367,6 +367,12 @@ export class FlowGenerator {
         await mkdir(thumbDir, { recursive: true });
         asset.thumbnail = path.join(thumbDir, `${job.id}_${index + 1}.jpg`);
         await writeFile(asset.thumbnail, thumb);
+        // Compact variant so 2-4 previews still fit in one tool result (~150k chars limit in Claude).
+        const small = await flow.downscaleJpeg(thumb, "image/jpeg", 320, 0.72);
+        if (small) {
+          asset.thumbnailSmall = path.join(thumbDir, `${job.id}_${index + 1}_small.jpg`);
+          await writeFile(asset.thumbnailSmall, small);
+        }
       }
       saved.push(asset);
       log.info(`Saved ${file} (${(buffer.length / 1_048_576).toFixed(1)} MB)`);

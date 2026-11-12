@@ -101,7 +101,8 @@ export function jobPreview(job, includeThumbnails) {
         ...(job.error ? { error: job.error, error_code: job.errorCode } : {}),
         warnings: job.result?.warnings ?? [],
         files: (job.result?.files ?? []).map((file) => {
-            const thumb = includeThumbnails ? readThumbnail(file.thumbnail) : undefined;
+            const many = (job.result?.files.length ?? 0) > 1;
+            const thumb = includeThumbnails ? readThumbnail(many ? file.thumbnailSmall ?? file.thumbnail : file.thumbnail) : undefined;
             return {
                 path: file.path,
                 name: path.basename(file.path),

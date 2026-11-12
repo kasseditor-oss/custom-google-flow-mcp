@@ -66,7 +66,8 @@ function jobResult(job, extra = {}) {
     }
     return {
         content: [{ type: "text", text: JSON.stringify(view, null, 2) }, ...images],
-        structuredContent: view,
+        // The widget renders straight from this (no follow-up call needed).
+        structuredContent: hostRendersWidget() && isTerminal(job.status) ? { ...view, preview: jobPreview(job, true) } : view,
         ...(["failed", "cancelled", "interrupted"].includes(job.status) ? { isError: true } : {}),
     };
 }
@@ -668,7 +669,7 @@ server.registerResource("google-flow-viewer", UI_RESOURCE_URI, {
             uri: UI_RESOURCE_URI,
             mimeType: UI_MIME_TYPE,
             text: (log.info(`Host requested the widget resource ${UI_RESOURCE_URI}.`), viewerHtml((await brandIconDataUri()) ?? brandIcon)),
-            _meta: { ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } } },
+            _meta: { ui: { prefersBorder: false, csp: { connectDomains: [], resourceDomains: [] } } },
         }],
 }));
 server.registerTool("flow_preview", {
